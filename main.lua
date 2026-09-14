@@ -17,18 +17,6 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
 
-local platform = pcall(function() return UserInputService:GetPlatform() end) and UserInputService:GetPlatform() or nil
-if platform == Enum.Platform.IOS or platform == Enum.Platform.Android then
-	pcall(function()
-		StarterGui:SetCore("SendNotification", {
-			Title = "Unsupported Platform",
-			Text = "This script requires a PC executor. Mobile is not supported.",
-			Duration = 8,
-		})
-	end)
-	return
-end
-
 local player = Players.LocalPlayer
 local httpRequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
 
