@@ -22,7 +22,7 @@ local httpRequest = (syn and syn.request) or (http and http.request) or http_req
 
 local CONFIG = {
 	whitelist     = {"omgyesssw"},
-	pythonServer  = "http://localhost:5000",
+	pythonServer  = "http://10.0.2.2:5000",
 	chatRateLimit = 5,
 	toggleKey     = Enum.KeyCode.RightShift,
 }
