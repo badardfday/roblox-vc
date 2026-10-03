@@ -2133,14 +2133,12 @@ end
 function startPlaybackMonitor()
 	if playbackMonitor then return end
 	playbackMonitor = task.spawn(function()
-		while true do
-			if not (isPlaying or isPaused) then break end
+		while isPlaying or isPaused do
 			local ok, res = pcall(function() return game:HttpGet(CONFIG.pythonServer .. ENDPOINTS.status) end)
-			if not ok or not res then break end
 			local sd
-			local dok = pcall(function() sd = HttpService:JSONDecode(res) end)
-			local st = dok and type(sd) == "table" and sd.status or nil
-			if dok and type(sd) == "table" then
+			local decoded = ok and res and pcall(function() sd = HttpService:JSONDecode(res) end)
+			local st = decoded and type(sd) == "table" and sd.status or nil
+			if st then
 				local serverPosition = tonumber(sd.position)
 				if serverPosition and not isScrubbing then playbackElapsed = serverPosition end
 				local serverDuration = tonumber(sd.duration)

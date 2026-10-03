@@ -683,16 +683,15 @@ def play():
 			
 			current_process = subprocess.Popen(
 				cmd,
-				stdin=subprocess.PIPE,
-				stdout=subprocess.PIPE,
-				stderr=subprocess.PIPE
+				stdin=subprocess.DEVNULL,
+				stdout=subprocess.DEVNULL,
+				stderr=None
 			)
 			
 			time.sleep(0.2)
 			if current_process.poll() is not None:
-				err = current_process.stderr.read().decode("utf-8", errors="ignore") if current_process.stderr else ""
 				current_process = None
-				return jsonify({"error": "ffplay failed to start", "stderr": err}), 500
+				return jsonify({"error": "ffplay exited before playback started; see the server console for details"}), 500
 			
 			playback_start_time = time.time() - paused_offset
 			is_paused = False
@@ -750,16 +749,15 @@ def resume():
 			
 			current_process = subprocess.Popen(
 				cmd,
-				stdin=subprocess.PIPE,
-				stdout=subprocess.PIPE,
-				stderr=subprocess.PIPE
+				stdin=subprocess.DEVNULL,
+				stdout=subprocess.DEVNULL,
+				stderr=None
 			)
 			
 			time.sleep(0.2)
 			if current_process.poll() is not None:
-				err = current_process.stderr.read().decode("utf-8", errors="ignore") if current_process.stderr else ""
 				current_process = None
-				return jsonify({"error": "ffplay failed to start", "stderr": err}), 500
+				return jsonify({"error": "ffplay exited before playback resumed; see the server console for details"}), 500
 			
 			playback_start_time = time.time() - paused_offset
 			is_paused = False
@@ -842,14 +840,13 @@ def seek():
 			if was_playing:
 				next_process = subprocess.Popen(
 					["ffplay", "-nodisp", "-autoexit", "-ss", str(position), current_path],
-					stdin=subprocess.PIPE,
-					stdout=subprocess.PIPE,
-					stderr=subprocess.PIPE
+					stdin=subprocess.DEVNULL,
+					stdout=subprocess.DEVNULL,
+					stderr=None
 				)
 				time.sleep(0.2)
 				if next_process.poll() is not None:
-					err = next_process.stderr.read().decode("utf-8", errors="ignore") if next_process.stderr else ""
-					return jsonify({"error": "ffplay failed to seek", "stderr": err}), 500
+					return jsonify({"error": "ffplay exited while seeking; see the server console for details"}), 500
 
 			old_process = current_process
 			if was_playing and old_process:
