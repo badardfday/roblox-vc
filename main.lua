@@ -125,8 +125,8 @@ local THEME = {
 	},
 	file = "MusicBot_Settings.json",
 	current = "Midnight",
-	properties = setmetatable({}, {__mode = "k"}),
-	strokes = setmetatable({}, {__mode = "k"}),
+	properties = {},
+	strokes = {},
 	buttons = {},
 	names = {"Midnight", "Ocean", "Sunset", "Light"},
 }
