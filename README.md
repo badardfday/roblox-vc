@@ -1,240 +1,220 @@
+# Roblox VC Music Player
+
+A Roblox Voice Chat music player with a local Python backend. The Roblox UI requests track metadata and audio from the backend; `ffplay` plays the audio through the computer's selected output device. A virtual audio cable can route that output to Roblox Voice Chat.
+
 > [!WARNING]
-> We are not responsible for any actions taken with this tool. This includes account or voice chat bans issued by Roblox. Playing inappropriate or explicit music violates Roblox's Terms of Service and **can get you VC banned.** Use at your own risk.
+> Mobile is not supported. This setup requires desktop audio routing and a running Python server.
+>
+> Use only audio you have the right to play, and follow Roblox's Community Standards and Voice Chat rules. Inappropriate or unauthorized audio may result in moderation, including a Voice Chat ban. Use this project at your own risk.
 
-> [!IMPORTANT]
-> This tool does **NOT** support mobile due to limited access to audio drivers.
+## Features
 
-# 🎵 Roblox VC Music Bot
+- Load tracks from Spotify, YouTube, and Apple Music links.
+- Search by song title; searches use YouTube and load the first result.
+- Play, pause, resume, stop, and skip tracks.
+- View album art, playback status, elapsed time, and duration.
+- Seek through a track with the timeline when its duration is available.
+- Queue tracks, play a queued track immediately, move it up or down, remove it, or clear the queue. The next queued track starts when playback finishes.
+- Switch between Spotify, YouTube, Apple Music, and Auto link detection.
+- Choose a UI theme: Midnight, Ocean, Sunset, or Light.
+- Manage the chat-command whitelist and Python server address in **About & Settings**.
+- Minimize the player, hide it, and restore it with **Right Shift**.
 
-A multi-platform music player for Roblox Voice Chat. Stream songs from **Spotify**, **YouTube**, and **Apple Music** directly through your microphone using a local Python server and a virtual audio cable.
+## Requirements
+
+- Windows desktop
+- Python and the packages listed in [`requirements.txt`](./requirements.txt)
+- FFmpeg tools, including **ffplay** for playback. **ffprobe** is recommended for accurate track durations.
+- A Roblox client/executor with HTTP request support
+- Optional: VB-Audio Virtual Cable (or a comparable virtual audio cable) to route audio to the Roblox microphone
+- Optional: Spotify Developer credentials to load Spotify links
+
+## Setup
+
+### 1. Install Python dependencies
+
+From the project folder, run:
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+### 2. Install FFmpeg
+
+Install FFmpeg for Windows and make sure `ffplay` is available on your `PATH`. `ffprobe` is optional, but enables duration detection from downloaded audio files.
+
+Verify the tools in PowerShell:
+
+```powershell
+ffplay -version
+ffprobe -version
+```
+
+### 3. Configure Spotify (optional)
+
+Spotify credentials are only needed for Spotify links. Create a Spotify app in the Spotify Developer Dashboard, then set the credentials in a `.env` file in the project folder:
+
+```env
+SPOTIPY_CLIENT_ID=your_client_id
+SPOTIPY_CLIENT_SECRET=your_client_secret
+```
+
+Keep `.env` private; do not publish or share your credentials. YouTube links and title searches do not require Spotify credentials. Apple Music links use the backend's Apple Music metadata lookup.
+
+### 4. Start the Python server
+
+In the project folder, run:
+
+```powershell
+python start_server.py
+```
+
+The launcher checks the `main` branch of this repository for a newer `spotify_server.py`, validates its Python syntax, backs up the current file as `spotify_server.py.bak`, and installs the update before starting the server. Updates are checked each time you use the launcher; the running server is not interrupted to install updates.
+
+If the GitHub check fails, the existing server version is started. If Git detects local changes to `spotify_server.py`, the launcher skips the update to protect those changes. Once the updater has installed a version, it records its checksum and can continue updating that version on future starts. To run the backend without checking for updates, use `python spotify_server.py`.
+
+The default address is `http://localhost:5000`. Check that it responds by opening [http://localhost:5000/health](http://localhost:5000/health); a running server returns `{"status":"ok"}`.
+
+The server's address can also be changed in **About & Settings → Settings** in the player. By default, the backend binds to localhost. Do not expose this unauthenticated local-control server to the public internet.
+
+### 5. Run the Roblox UI
+
+Run `main.lua` in a compatible desktop environment with HTTP requests enabled. The player checks the Python server before enabling playback controls.
+
+The published loadstring is:
 
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/badardfday/roblox-vc/main/main.lua"))()
 ```
 
-## ✨ Features
+Only run scripts you trust and have reviewed.
 
-- **Multi-Platform**: Fetch and play songs from Spotify, YouTube, and Apple Music
-- **YouTube Audio Streaming**: Downloads full songs from YouTube via yt-dlp
-- **Album Art**: Automatically downloads and displays cover art / thumbnails in the UI
-- **Queue System**: Add multiple songs to a queue with auto-play on finish
-- **Play / Pause / Resume / Stop**: Full playback controls with seek support
-- **Chat Commands**: Use `!play`, `!pause`, `!resume`, `!stop`, `!skip` in-game
-- **Whitelist System**: Control who can use chat commands
+## Audio routing
 
-## 📋 Prerequisites
+`ffplay` outputs audio through the computer's current default playback device. To route it into Voice Chat with VB-Audio Virtual Cable:
 
-- **Roblox Executor** with HTTP support (Volt, Solara, Velocity, etc)
-- **Python 3.8+**
-- **FFmpeg / FFplay** (for audio playback)
-- **Spotify Developer Account** (for Spotify features — optional if only using YouTube/Apple Music)
-- **VB-Audio Virtual Cable** (to route audio into Roblox VC)
+1. Install VB-Audio Virtual Cable.
+2. Set **CABLE Input** as the Windows playback/output device so `ffplay` sends audio into the cable.
+3. Select **CABLE Output** as the microphone/input device in Roblox.
+4. Start playback and confirm the correct input and output devices are selected.
 
-## 🚀 Installation
+Device names or Windows sound settings may vary. Do not play disruptive or inappropriate audio in Voice Chat.
 
-### Step 1: Install Python Dependencies
+## Using the player
 
-```bash
-pip install flask spotipy yt-dlp requests python-dotenv
-```
+### Load and play tracks
 
-### Step 2: Install FFmpeg
+- Paste a supported Spotify, YouTube, or Apple Music link into the input and select **Load**. The player detects the link type automatically; the **Auto** mode can also be selected.
+- Type a song title and select **Load** to search YouTube. The backend downloads the first result.
+- If a track is already playing, newly loaded tracks are added to the queue. Otherwise, the track is loaded and can be started with **Play**.
 
-**Windows (Chocolatey):**
-```bash
-choco install ffmpeg
-```
+Spotify links provide metadata through Spotify and use the backend's YouTube audio lookup for playback; this project does not stream audio from Spotify. Apple Music is used for metadata lookup, and playback audio is fetched separately by the backend.
 
-**Or download from:** https://ffmpeg.org/download.html
+### Playback controls
 
-Verify installation:
-```bash
-ffmpeg -version
-ffplay -version
-```
+| Control | Action |
+| --- | --- |
+| Play / Pause | Start a loaded track or toggle playback |
+| Stop | Stop playback and clear the current track |
+| Skip | Stop the current track and play the next queued track |
+| Timeline | Click or drag to seek when a duration is known |
+| Queue | Open or close the queue panel |
 
-### Step 3: Configure Spotify API Credentials (Optional)
+Seeking restarts `ffplay` at the chosen position. Track duration is read from the downloaded audio with `ffprobe` when available, or uses source metadata as a fallback. If no duration is known, the timeline cannot seek.
 
-> Only required if you want to use Spotify links. YouTube and Apple Music work without this.
+### Queue
 
-1. Go to https://developer.spotify.com/dashboard
-2. Log in or create a Spotify account
-3. Create a new app
-4. Copy your **Client ID** and **Client Secret**
-5. Create a `.env` file in the project root:
+- Use the queue button in the player to open the queue.
+- Select **Play** on an item to play it immediately.
+- Use **↑ / ↓** to reorder items.
+- Use **×** to remove one item, or **Clear** to empty the queue.
+- Queued items are held in memory and are cleared when the script is restarted.
 
-```env
-SPOTIPY_CLIENT_ID=your_client_id_here
-SPOTIPY_CLIENT_SECRET=your_client_secret_here
-```
+### About & Settings
 
-### Step 4: (Optional) Export YouTube Cookies
+Open the **About & Settings** panel from the player header:
 
-To avoid bot detection when downloading from YouTube:
+- **Appearance:** choose Midnight, Ocean, Sunset, or Light. The selected theme is saved locally when file persistence is available.
+- **Python server:** enter the server base URL, select **Test** to check its `/health` endpoint, and select **Save** to use and persist it. Example: `http://localhost:5000`.
+- **Whitelist manager:** add usernames or UserIds permitted to use chat commands, and remove entries from the list. The local player is always permitted. Whitelist changes are saved to `MusicBot_Whitelist.json` when file persistence is available.
 
-1. Install a cookie export extension for your browser
-2. Go to youtube.com and log in
-3. Export cookies to a file named `cookies.txt`
-4. Place `cookies.txt` in the same folder as `spotify_server.py`
+If the server runs on another machine, use a URL reachable from the machine running the Roblox client and configure the backend to listen on an appropriate trusted network interface. Use a private network and firewall; the backend does not provide authentication.
 
-### Step 5: Start the Python Server
+## Chat commands
 
-```bash
-python spotify_server.py
-```
-
-You should see:
-```
-🎵 Music Bot Server running on http://localhost:5000
-Supported services: Spotify, Apple Music, YouTube
-```
-
-### Step 6: Run the Lua Script
-
-1. Open your Roblox executor
-2. Execute `main.lua` or the loadstring above
-3. The UI will appear in the center of your screen
-
-## 🎮 Usage Guide
-
-### Loading a Song
-
-Use the **mode button** in the header to switch between Spotify, YouTube, and Apple Music.
-
-**Spotify:**
-1. Switch mode to **Spotify**
-2. Paste a Spotify track link
-3. Click **Load** → Click **▶ Play**
-
-**YouTube:**
-1. Switch mode to **YouTube**
-2. Paste a YouTube video link
-3. Click **Load** → Click **▶ Play**
-
-**Apple Music:**
-1. Switch mode to **Apple**
-2. Paste an Apple Music song link
-3. Click **Load** → Click **▶ Play**
-
-### Setting Up Audio Passthrough
-
-1. Install [VB-Audio Virtual Cable](https://vb-audio.com/Cable/)
-2. Set **CABLE Output** as your **microphone input** in Roblox settings
-3. Set **CABLE Input** as your **default playback device** in Windows Sound settings
-4. Click the **🔇 VC Bypass** button in the UI header to apply the voice chat bypass
-
-### Chat Commands
+Whitelisted users can use these commands in Roblox chat:
 
 | Command | Action |
-|---------|--------|
-| `!play [song name]` | Search and play a song by name |
-| `!pause` | Pause current playback |
-| `!resume` | Resume paused playback |
-| `!stop` | Stop and clear current song |
-| `!skip` | Skip to next song in queue |
+| --- | --- |
+| `!play <song or link>` | Search for a title or load a supported music link |
+| `!pause` | Pause playback |
+| `!resume` | Resume playback |
+| `!stop` | Stop and clear the current track |
+| `!skip` | Skip to the next queued track |
 
-> Only whitelisted players can use chat commands.
+The whitelist is managed locally in the player settings. Commands depend on the Roblox chat system being available and may be subject to the script's chat rate limit.
 
-### Playback Controls
+## Troubleshooting
 
-| Button | Action |
-|--------|--------|
-| ▶ Play | Start playing the loaded song |
-| ▶ Resume | Resume from where you paused |
-| ⏸ Pause | Pause current playback |
-| ⏹ Stop | Stop and clear current song |
+### The player says the Python server is offline
 
-### Queue Management
+- Start the backend with `python spotify_server.py`.
+- Visit `http://localhost:5000/health` on the machine running the backend.
+- In **About & Settings → Settings**, confirm the server URL, then select **Test** and **Save**.
+- If the backend is on another machine, confirm the client can reach that machine and that the server/firewall configuration permits the connection.
+- Confirm HTTP requests are enabled in the client environment.
 
-- Click **≡ Queue** to toggle the queue panel
-- Songs added while another is playing are auto-queued
-- Click the **▶** button on a queue item to play it immediately
-- Queue auto-plays when the current song finishes
+### Playback does not start or there is no sound
 
-## ⚙️ Configuration
+- Confirm `ffplay -version` works in PowerShell and that FFmpeg is on `PATH`.
+- Check the selected Windows playback device. For Voice Chat routing, select the virtual cable's playback device for Windows and its recording device in Roblox.
+- Check the backend terminal for download or playback errors.
 
-### Whitelist Users
+### Seeking is unavailable or duration is missing
 
-Edit the whitelist table in `main.lua`:
+- Seeking requires a known duration.
+- Install FFprobe and ensure it is on `PATH`, then restart the backend. Source metadata may provide a duration if probing is unavailable.
 
-```lua
-local CONFIG = {
-    whitelist = {"lolwhenme", "your_username"},
-    ...
-}
+### YouTube downloads fail
+
+- Check that YouTube is reachable from the backend machine.
+- Update the dependencies with `python -m pip install -r requirements.txt --upgrade`.
+- If YouTube requires authentication for a video, an exported `cookies.txt` may be placed beside `spotify_server.py`. Keep cookies private and do not commit or share them.
+
+### Spotify links fail
+
+- Confirm `SPOTIPY_CLIENT_ID` and `SPOTIPY_CLIENT_SECRET` are set correctly in `.env`.
+- Restart the Python server after changing `.env`.
+- Confirm the Spotify track is available in the region/account context used by the API.
+
+### Album art does not load
+
+- Check that the Python server is reachable and review its console output.
+- Album art is cached by the client when supported file functions are available; otherwise, the UI uses its fallback artwork.
+
+## Project files
+
+```text
+main.lua             Roblox player UI and controls
+spotify_server.py    Flask backend for metadata, downloads, playback, and local file serving
+start_server.py      Startup updater and launcher for spotify_server.py
+spotify_backend.py   Standalone backend script
+loadstring.lua       Loader script
+requirements.txt     Python dependencies
+files/               Downloaded audio and cached album art (created by the backend)
+.env                 Optional Spotify credentials (create locally; do not share)
 ```
 
-### Change Server URL
+## Support
 
-If running the Python server on a different machine or port:
+- Check the troubleshooting section and the Python server console output.
+- Confirm the backend health endpoint responds: `http://localhost:5000/health`.
+- Community: [discord.gg/NCEfg4rKPC](https://discord.gg/NCEfg4rKPC)
 
-```lua
-pythonServer = "http://192.168.1.100:5000"
-```
+## License
 
-### Adjust Audio Quality
-
-In `spotify_server.py`, change the MP3 bitrate:
-
-```python
-"preferredquality": "320"  -- Options: 128, 192, 256, 320
-```
-
-## 🐛 Troubleshooting
-
-### "Python server not running"
-- Ensure `python spotify_server.py` is running in a terminal
-- Check that port 5000 is not blocked by a firewall
-- Verify HTTP requests are enabled in your executor
-
-### Album art not loading
-- The server downloads and caches album art locally, then serves it via `http://localhost:5000/files/...`
-- Delete the `AlbumArt` folder in your executor's workspace to clear corrupted cache
-- Check the Python server console for download errors
-
-### FFmpeg not found
-- Make sure FFmpeg and FFplay are installed and in your system PATH
-- Test: `ffplay -version` in command prompt
-
-### Songs not downloading
-- Check YouTube is accessible from your machine
-- Export YouTube cookies (see Installation Step 4)
-- Update yt-dlp: `pip install -U yt-dlp`
-
-### Apple Music not working
-- Apple Music uses a scraped developer token from Apple's web player
-- If it breaks, the JS bundle structure may have changed — open an issue
-
-## 📂 Project Structure
-
-```
-roblox-vc-spotify/
-├── main.lua              # Roblox client script (UI + playback logic)
-├── spotify_server.py     # Flask server (fetches metadata, downloads audio, serves files)
-├── spotify_backend.py    # Standalone CLI backend (optional)
-├── loadstring.lua        # Remote loadstring wrapper
-├── .env                  # Spotify API credentials (not committed)
-├── requirements.txt      # Python dependencies
-├── files/                # Cached audio and album art (auto-created)
-│   └── album_art/        # Downloaded cover images
-└── README.md
-```
-
-## 📞 Support
-
-If you encounter issues:
-
-1. Check that all prerequisites are installed
-2. Verify the Python server is running: `http://localhost:5000/health`
-3. Check your Roblox executor has HTTP enabled
-4. Check the Python server console output for error details
-
-**Discord:** [discord.gg/NCEfg4rKPC](https://discord.gg/NCEfg4rKPC)
-
-## 📜 License
-
-This project is for personal and educational use. Respect Spotify, YouTube, and Apple Music's terms of service.
+See [`LICENSE`](./LICENSE). Use this software and third-party services in accordance with their applicable terms and policies.
 
 ---
 
-**Made by [borthdayzz](https://github.com/borthdayzz)** · v3
+Made by [borthdayzz](https://github.com/borthdayzz).

@@ -59,6 +59,7 @@ local ENDPOINTS = {
 	stop         = "/stop",
 	status       = "/status",
 	search       = "/search",
+	seek         = "/seek",
 }
 
 local C = {
@@ -138,6 +139,10 @@ if isfile and readfile and isfile(THEME.file) then
 		if type(saved) == "table" and THEME.palettes[saved.theme] then
 			THEME.current = saved.theme
 		end
+		if type(saved) == "table" and type(saved.pythonServer) == "string"
+			and saved.pythonServer:match("^https?://[^/%s]+/?$") then
+			CONFIG.pythonServer = saved.pythonServer:gsub("/+$", "")
+		end
 	end)
 end
 for key, value in pairs(THEME.palettes[THEME.current]) do
@@ -182,7 +187,10 @@ end
 THEME.savePreference = function()
 	if writefile then
 		pcall(function()
-			writefile(THEME.file, HttpService:JSONEncode({theme = THEME.current}))
+			writefile(THEME.file, HttpService:JSONEncode({
+				theme = THEME.current,
+				pythonServer = CONFIG.pythonServer,
+			}))
 		end)
 	end
 end
@@ -215,6 +223,7 @@ THEME.apply = function(name)
 	end
 	if THEME.refreshServiceModeTabs then THEME.refreshServiceModeTabs(true) end
 	if THEME.refreshPageTabs then THEME.refreshPageTabs() end
+	if THEME.refreshWhitelistLabel then THEME.refreshWhitelistLabel() end
 	THEME.savePreference()
 	if THEME.refreshSelection then THEME.refreshSelection() end
 end
@@ -681,13 +690,17 @@ local statusPillText = make("TextLabel", {
 }, statusPill)
 
 local progTrack = make("Frame", {
-	Name = "ProgressTrack", Size = UDim2.new(1, 0, 0, 6), Position = UDim2.new(0, 0, 0, 110),
-	BackgroundColor3 = C.surfacePop, BorderSizePixel = 0,
+	Name = "ProgressTrack", Size = UDim2.new(1, 0, 0, 20), Position = UDim2.new(0, 0, 0, 103),
+	BackgroundTransparency = 1, BorderSizePixel = 0, Active = true,
 }, rightCol)
-corner(RADIUS.pill, progTrack)
+local progTrackVisual = make("Frame", {
+	Name = "ProgressTrackVisual", Size = UDim2.new(1, 0, 0, 6), Position = UDim2.new(0, 0, 0.5, -3),
+	BackgroundColor3 = C.surfacePop, BorderSizePixel = 0,
+}, progTrack)
+corner(RADIUS.pill, progTrackVisual)
 local progFill = make("Frame", {
 	Name = "ProgressFill", Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = C.spotify, BorderSizePixel = 0,
-}, progTrack)
+}, progTrackVisual)
 corner(RADIUS.pill, progFill)
 local progKnob = make("Frame", {
 	Name = "Knob", Size = UDim2.new(0, 12, 0, 12), Position = UDim2.new(1, -6, 0.5, -6),
@@ -1323,14 +1336,104 @@ copyDiscordBtn.MouseButton1Click:Connect(function()
 	end
 end)
 
-local c4 = cmCard(THEME.pages.Settings, 100, 2)
+local serverCard = cmCard(THEME.pages.Settings, 96, 2)
+cmLabel(serverCard, {
+	Size = UDim2.new(1, -20, 0, 16), Position = UDim2.new(0, 14, 0, 8),
+	Text = "PYTHON SERVER", TextColor3 = C.textMuted, Font = Enum.Font.GothamBold, TextSize = 9,
+})
+local serverAddressBox = make("TextBox", {
+	Size = UDim2.new(1, -186, 0, 28), Position = UDim2.new(0, 14, 0, 34),
+	BackgroundColor3 = C.surfacePop, TextColor3 = C.textPrimary,
+	PlaceholderColor3 = C.textMuted, PlaceholderText = "http://localhost:5000",
+	Text = CONFIG.pythonServer, Font = Enum.Font.Gotham, TextSize = 10,
+	TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false,
+	BorderSizePixel = 0, ZIndex = 103,
+}, serverCard)
+corner(RADIUS.btn, serverAddressBox)
+stroke(C.borderSub, 1, 0.3, serverAddressBox)
+
+local saveServerBtn = make("TextButton", {
+	Size = UDim2.new(0, 76, 0, 28), Position = UDim2.new(1, -158, 0, 34),
+	BackgroundColor3 = currentAccent, TextColor3 = C.black, Text = "Save",
+	Font = Enum.Font.GothamBold, TextSize = 10, BorderSizePixel = 0,
+	AutoButtonColor = false, ZIndex = 103,
+}, serverCard)
+corner(RADIUS.btn, saveServerBtn)
+
+local testServerBtn = make("TextButton", {
+	Size = UDim2.new(0, 72, 0, 28), Position = UDim2.new(1, -76, 0, 34),
+	BackgroundColor3 = C.surfacePop, TextColor3 = C.textSec, Text = "Test",
+	Font = Enum.Font.GothamBold, TextSize = 10, BorderSizePixel = 0,
+	AutoButtonColor = false, ZIndex = 103,
+}, serverCard)
+corner(RADIUS.btn, testServerBtn)
+stroke(C.borderSub, 1, 0.3, testServerBtn)
+
+local serverTestLabel = cmLabel(serverCard, {
+	Size = UDim2.new(1, -28, 0, 16), Position = UDim2.new(0, 14, 0, 70),
+	Text = "Set the address where spotify_server.py is running.",
+	TextColor3 = C.textMuted, Font = Enum.Font.Gotham, TextSize = 9,
+	TextTruncate = Enum.TextTruncate.AtEnd,
+})
+
+local function normalizeServerAddress(value)
+	local address = tostring(value or ""):match("^%s*(.-)%s*$") or ""
+	if not address:match("^https?://[^/%s]+/?$") then return nil end
+	return address:gsub("/+$", "")
+end
+
+local function testServerAddress(address)
+	local ok, response = pcall(function()
+		return game:HttpGet(address .. ENDPOINTS.health)
+	end)
+	if not ok or not response then return false end
+	local decodedOk, data = pcall(function() return HttpService:JSONDecode(response) end)
+	return decodedOk and type(data) == "table" and data.status == "ok"
+end
+
+saveServerBtn.MouseButton1Click:Connect(function()
+	local address = normalizeServerAddress(serverAddressBox.Text)
+	if not address then
+		serverTestLabel.Text = "Enter a valid http:// or https:// address."
+		serverTestLabel.TextColor3 = C.error
+		return
+	end
+	CONFIG.pythonServer = address
+	serverAddressBox.Text = address
+	THEME.savePreference()
+	local available = testServerAddress(address)
+	if THEME.setBackendAvailable then THEME.setBackendAvailable(available) end
+	serverTestLabel.Text = available and "Saved · server is online." or "Saved · server is offline."
+	serverTestLabel.TextColor3 = available and C.success or C.warn
+	setStatus(available and "Python server connected" or "Python server address saved; server offline", available and C.success or C.warn)
+end)
+
+testServerBtn.MouseButton1Click:Connect(function()
+	local address = normalizeServerAddress(serverAddressBox.Text)
+	if not address then
+		serverTestLabel.Text = "Enter a valid http:// or https:// address."
+		serverTestLabel.TextColor3 = C.error
+		return
+	end
+	testServerBtn.Interactable = false
+	serverTestLabel.Text = "Testing connection..."
+	serverTestLabel.TextColor3 = C.textMuted
+	task.spawn(function()
+		local available = testServerAddress(address)
+		testServerBtn.Interactable = true
+		serverTestLabel.Text = available and "Connection successful." or "Could not reach /health at this address."
+		serverTestLabel.TextColor3 = available and C.success or C.error
+	end)
+end)
+
+local c4 = cmCard(THEME.pages.Settings, 210, 3)
 cmLabel(c4, {
 	Size = UDim2.new(1, -16, 0, 14), Position = UDim2.new(0, 14, 0, 8),
 	Text = "WHITELIST MANAGER", TextColor3 = C.spotify, Font = Enum.Font.GothamBold, TextSize = 9,
 })
 cmLabel(c4, {
 	Size = UDim2.new(1, -16, 0, 14), Position = UDim2.new(0, 14, 0, 22),
-	Text = "You (" .. (player and player.Name or "LocalPlayer") .. ") are always whitelisted.",
+	Text = "You are always whitelisted. Remove others below.",
 	TextColor3 = C.textMuted, Font = Enum.Font.Gotham, TextSize = 9,
 })
 
@@ -1355,15 +1458,64 @@ local btnAddWL = make("TextButton", {
 }, c4)
 corner(RADIUS.btn, btnAddWL)
 
-local wlListLabel = cmLabel(c4, {
-	Size = UDim2.new(1, -28, 0, 24), Position = UDim2.new(0, 14, 0, 72),
-	Text = "", TextColor3 = C.textSec, Font = Enum.Font.Gotham, TextSize = 9,
-	TextTruncate = Enum.TextTruncate.AtEnd,
-})
+local wlList = make("ScrollingFrame", {
+	Name = "WhitelistEntries", Size = UDim2.new(1, -28, 0, 118),
+	Position = UDim2.new(0, 14, 0, 78), BackgroundTransparency = 1,
+	BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = C.border,
+	CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	ScrollingDirection = Enum.ScrollingDirection.Y, ZIndex = 103,
+}, c4)
+make("UIListLayout", {
+	Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder,
+}, wlList)
 
 local function refreshWhitelistLabel()
-	wlListLabel.Text = "Allowed: " .. (#CONFIG.whitelist > 0 and table.concat(CONFIG.whitelist, ", ") or "None added")
+	for _, child in ipairs(wlList:GetChildren()) do
+		if child:IsA("Frame") or child:IsA("TextLabel") then child:Destroy() end
+	end
+	if #CONFIG.whitelist == 0 then
+		make("TextLabel", {
+			Size = UDim2.new(1, -8, 0, 24), BackgroundTransparency = 1,
+			Text = "No additional users are whitelisted.",
+			TextColor3 = C.textMuted, Font = Enum.Font.Gotham, TextSize = 9,
+			TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 1,
+		}, wlList)
+	else
+		for index, entry in ipairs(CONFIG.whitelist) do
+			local capturedEntry = tostring(entry)
+			local row = make("Frame", {
+				Name = "Whitelist_" .. index, Size = UDim2.new(1, -6, 0, 26),
+				BackgroundColor3 = C.surfaceHigh, BorderSizePixel = 0, LayoutOrder = index,
+			}, wlList)
+			corner(RADIUS.btn, row)
+			make("TextLabel", {
+				Size = UDim2.new(1, -42, 1, 0), Position = UDim2.new(0, 8, 0, 0),
+				BackgroundTransparency = 1, Text = capturedEntry,
+				TextColor3 = C.textSec, Font = Enum.Font.Gotham, TextSize = 9,
+				TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
+			}, row)
+			local removeButton = make("TextButton", {
+				Size = UDim2.new(0, 24, 0, 22), Position = UDim2.new(1, -28, 0.5, -11),
+				BackgroundColor3 = C.surfacePop, TextColor3 = C.error, Text = "×",
+				Font = Enum.Font.GothamBold, TextSize = 13, BorderSizePixel = 0,
+				AutoButtonColor = false,
+			}, row)
+			corner(RADIUS.pill, removeButton)
+			removeButton.MouseButton1Click:Connect(function()
+				for entryIndex, value in ipairs(CONFIG.whitelist) do
+					if tostring(value):lower() == capturedEntry:lower() then
+						table.remove(CONFIG.whitelist, entryIndex)
+						break
+					end
+				end
+				saveWhitelist()
+				refreshWhitelistLabel()
+				setStatus("Whitelist entry removed", C.warn)
+			end)
+		end
+	end
 end
+THEME.refreshWhitelistLabel = refreshWhitelistLabel
 refreshWhitelistLabel()
 THEME.updateModalSize(false)
 
@@ -1474,6 +1626,9 @@ local function getDuration()
 end
 
 local eqTick = 0
+local isScrubbing = false
+local scrubInputType = nil
+local scrubOriginalPosition = 0
 RunService.RenderStepped:Connect(function(dt)
 	local active = isPlaying and not isPaused
 	if active then eqTick = eqTick + dt end
@@ -1491,17 +1646,12 @@ RunService.RenderStepped:Connect(function(dt)
 		bar.BackgroundTransparency = active and math.clamp(0.55 - (h / 60) * 0.5, 0, 0.6) or 0.65
 	end
 
-	if active then
+	if active and not isScrubbing then
 		playbackElapsed = playbackElapsed + dt
 		timeElapsedLabel.Text = formatTime(playbackElapsed)
 
 		local dur = getDuration()
-		local frac
-		if dur then
-			frac = math.clamp(playbackElapsed / dur, 0, 1)
-		else
-			frac = math.clamp((playbackElapsed % 30) / 30, 0.02, 1)
-		end
+		local frac = dur and math.clamp(playbackElapsed / dur, 0, 1) or 0
 		progFill.Size = UDim2.new(frac, 0, 1, 0)
 		miniFill.Size = UDim2.new(frac, 0, 1, 0)
 	end
@@ -1517,6 +1667,7 @@ local function applyAccent(accentColor)
 	miniPlayBtn.BackgroundColor3   = accentColor
 	playHeroButton.BackgroundColor3= accentColor
 	loadButton.BackgroundColor3    = accentColor
+	saveServerBtn.BackgroundColor3 = accentColor
 	artGlow.BackgroundColor3       = accentColor
 	sourceBadge.BackgroundColor3   = accentColor
 	for _, bar in ipairs(eqBars) do bar.BackgroundColor3 = accentColor end
@@ -1715,6 +1866,10 @@ end
 
 local function setNowPlaying(sd)
 	currentSongData = sd
+	playbackElapsed = 0
+	timeElapsedLabel.Text = "00:00"
+	progFill.Size = UDim2.new(0, 0, 1, 0)
+	miniFill.Size = UDim2.new(0, 0, 1, 0)
 	songTitle.Text  = sd.title or "Unknown"
 	songArtist.Text = sd.artist or "—"
 	miniTitle.Text  = sd.title or "Unknown"
@@ -1754,8 +1909,13 @@ end
 local function launchSong(s)
 	setNowPlaying(s)
 	setStatus("Playing: " .. (s.title or "Song"), C.success)
+	local playUrl = CONFIG.pythonServer .. ENDPOINTS.play .. "?path=" .. HttpService:UrlEncode(s.path)
+	local duration = tonumber(s.duration)
+	if duration and duration > 0 then
+		playUrl = playUrl .. "&duration=" .. HttpService:UrlEncode(tostring(duration))
+	end
 	local ok = pcall(function()
-		return game:HttpGet(CONFIG.pythonServer .. ENDPOINTS.play .. "?path=" .. HttpService:UrlEncode(s.path))
+		return game:HttpGet(playUrl)
 	end)
 	if ok then
 		isPlaying = true
@@ -1771,6 +1931,14 @@ local function launchSong(s)
 	return ok
 end
 
+local function moveSongInQueue(index, offset)
+	local newIndex = index + offset
+	if newIndex < 1 or newIndex > #songQueue then return end
+	local song = table.remove(songQueue, index)
+	table.insert(songQueue, newIndex, song)
+	updateQueueUI()
+end
+
 function updateQueueUI()
 	for _, c in ipairs(queueList:GetChildren()) do
 		if c:IsA("Frame") then c:Destroy() end
@@ -1780,6 +1948,7 @@ function updateQueueUI()
 	queueToggleBtn.Text     = string.format("≡  Queue (%d)", #songQueue)
 
 	for i, song in ipairs(songQueue) do
+		local queueIndex = i
 		local item = make("Frame", {
 			Name = "QueueItem_" .. i, Size = UDim2.new(1, -4, 0, 54),
 			BackgroundColor3 = C.surfaceHigh, BorderSizePixel = 0, LayoutOrder = i,
@@ -1795,14 +1964,14 @@ function updateQueueUI()
 		corner(RADIUS.pill, idxBadge)
 
 		make("TextLabel", {
-			Size = UDim2.new(1, -108, 0, 18), Position = UDim2.new(0, 42, 0, 9),
+			Size = UDim2.new(1, -160, 0, 18), Position = UDim2.new(0, 42, 0, 9),
 			BackgroundTransparency = 1, Text = song.title or "Unknown", TextColor3 = C.textPrimary,
 			Font = Enum.Font.GothamBold, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left,
 			TextTruncate = Enum.TextTruncate.AtEnd,
 		}, item)
 
 		make("TextLabel", {
-			Size = UDim2.new(1, -108, 0, 14), Position = UDim2.new(0, 42, 0, 28),
+			Size = UDim2.new(1, -160, 0, 14), Position = UDim2.new(0, 42, 0, 28),
 			BackgroundTransparency = 1, Text = song.artist or "Unknown", TextColor3 = C.textMuted,
 			Font = Enum.Font.Gotham, TextSize = 9, TextXAlignment = Enum.TextXAlignment.Left,
 			TextTruncate = Enum.TextTruncate.AtEnd,
@@ -1817,11 +1986,33 @@ function updateQueueUI()
 		THEME.registerBackendControl(pb)
 		if currentAccent == C.youtube or currentAccent == C.apple then pb.TextColor3 = C.white end
 
+		local upButton = make("TextButton", {
+			Name = "MoveUpBtn", Size = UDim2.new(0, 22, 0, 22),
+			Position = UDim2.new(1, -116, 0.5, -11),
+			BackgroundColor3 = C.surfacePop, TextColor3 = C.textSec, Text = "↑",
+			Font = Enum.Font.GothamBold, TextSize = 11, BorderSizePixel = 0,
+			AutoButtonColor = false, Interactable = i > 1,
+		}, item)
+		corner(RADIUS.pill, upButton)
+		upButton.TextTransparency = i > 1 and 0 or 0.65
+		upButton.MouseButton1Click:Connect(function() moveSongInQueue(queueIndex, -1) end)
+
+		local downButton = make("TextButton", {
+			Name = "MoveDownBtn", Size = UDim2.new(0, 22, 0, 22),
+			Position = UDim2.new(1, -90, 0.5, -11),
+			BackgroundColor3 = C.surfacePop, TextColor3 = C.textSec, Text = "↓",
+			Font = Enum.Font.GothamBold, TextSize = 11, BorderSizePixel = 0,
+			AutoButtonColor = false, Interactable = i < #songQueue,
+		}, item)
+		corner(RADIUS.pill, downButton)
+		downButton.TextTransparency = i < #songQueue and 0 or 0.65
+		downButton.MouseButton1Click:Connect(function() moveSongInQueue(queueIndex, 1) end)
+
 		pb.MouseButton1Click:Connect(function()
 			if not THEME.requireBackend() then return end
-			local s = songQueue[i]
+			local s = songQueue[queueIndex]
 			if not s then return end
-			table.remove(songQueue, i)
+			table.remove(songQueue, queueIndex)
 			updateQueueUI()
 			launchSong(s)
 		end)
@@ -1836,7 +2027,7 @@ function updateQueueUI()
 		hover(rb, C.surfacePop, Color3.fromRGB(190, 50, 50), C.textMuted, C.white)
 		rb.MouseButton1Click:Connect(function()
 			if not THEME.requireBackend() then return end
-			table.remove(songQueue, i)
+			table.remove(songQueue, queueIndex)
 			updateQueueUI()
 			setStatus("Removed track from queue", C.warn)
 		end)
@@ -1865,10 +2056,7 @@ headerQueueBtn.MouseButton1Click:Connect(toggleQueueDrawer)
 btnQueueTraffic.MouseButton1Click:Connect(toggleQueueDrawer)
 
 function isPythonServerRunning()
-	local ok, res = pcall(function() return game:HttpGet(CONFIG.pythonServer .. ENDPOINTS.health) end)
-	if not ok or not res then return false end
-	local s, data = pcall(function() return HttpService:JSONDecode(res) end)
-	return s and type(data) == "table" and data.status == "ok"
+	return testServerAddress(CONFIG.pythonServer)
 end
 
 THEME.setBackendAvailable = function(available)
@@ -1920,7 +2108,7 @@ THEME.requireBackend = function()
 end
 
 for _, control in ipairs({
-	playHeroButton, stopButton, skipButton, miniPlayBtn, miniSkipBtn,
+	playHeroButton, stopButton, skipButton, miniPlayBtn, miniSkipBtn, progTrack,
 	loadButton, inputBox, btnClearQueue,
 }) do
 	THEME.registerBackendControl(control)
@@ -1946,23 +2134,49 @@ function startPlaybackMonitor()
 	if playbackMonitor then return end
 	playbackMonitor = task.spawn(function()
 		while true do
-			if not isPlaying then break end
+			if not (isPlaying or isPaused) then break end
 			local ok, res = pcall(function() return game:HttpGet(CONFIG.pythonServer .. ENDPOINTS.status) end)
 			if not ok or not res then break end
 			local sd
 			local dok = pcall(function() sd = HttpService:JSONDecode(res) end)
 			local st = dok and type(sd) == "table" and sd.status or nil
-			if st == "finished" or st == "stopped" then
+			if dok and type(sd) == "table" then
+				local serverPosition = tonumber(sd.position)
+				if serverPosition and not isScrubbing then playbackElapsed = serverPosition end
+				local serverDuration = tonumber(sd.duration)
+				if serverDuration and serverDuration > 0 and currentSongData then
+					currentSongData.duration = serverDuration
+					timeTotalLabel.Text = formatTime(serverDuration)
+				end
+				if serverPosition and not isScrubbing then
+					timeElapsedLabel.Text = formatTime(serverPosition)
+					local duration = getDuration()
+					if duration then
+						local fraction = math.clamp(serverPosition / duration, 0, 1)
+						progFill.Size = UDim2.new(fraction, 0, 1, 0)
+						miniFill.Size = UDim2.new(fraction, 0, 1, 0)
+					end
+				end
+			end
+			if st == "finished" then
 				isPlaying = false
 				isPaused  = false
 				if #songQueue > 0 then
 					task.wait(0.5)
+					playbackMonitor = nil
 					playNextInQueue()
+					return
 				else
 					setTransportUI("idle")
 					setIdleUI()
 					setStatus("Finished playing", C.success)
 				end
+				break
+			elseif st == "stopped" then
+				isPlaying = false
+				isPaused  = false
+				setTransportUI("idle")
+				setIdleUI()
 				break
 			end
 			task.wait(1)
@@ -2072,8 +2286,13 @@ function playSong()
 	setTransportUI("playing")
 	setStatus("Playing: " .. (currentSongData.title or ""), C.success)
 
+	local playUrl = CONFIG.pythonServer .. ENDPOINTS.play .. "?path=" .. HttpService:UrlEncode(currentSongData.path)
+	local duration = tonumber(currentSongData.duration)
+	if duration and duration > 0 then
+		playUrl = playUrl .. "&duration=" .. HttpService:UrlEncode(tostring(duration))
+	end
 	local ok = pcall(function()
-		return game:HttpGet(CONFIG.pythonServer .. ENDPOINTS.play .. "?path=" .. HttpService:UrlEncode(currentSongData.path))
+		return game:HttpGet(playUrl)
 	end)
 	if not ok then
 		setStatus("Failed to play", C.error)
@@ -2092,18 +2311,107 @@ function pauseSong()
 	setTransportUI("paused")
 	setStatus("Paused: " .. (currentSongData and currentSongData.title or ""), C.warn)
 
-	local ok = pcall(function() return game:HttpGet(CONFIG.pythonServer .. ENDPOINTS.pause) end)
+	local ok, response = pcall(function() return game:HttpGet(CONFIG.pythonServer .. ENDPOINTS.pause) end)
 	if not ok then
 		setStatus("Failed to pause", C.error)
 		isPaused  = false
 		isPlaying = true
 		setTransportUI("playing")
+	else
+		local decoded, data = pcall(function() return HttpService:JSONDecode(response) end)
+		local pausedPosition = decoded and type(data) == "table" and tonumber(data.offset) or nil
+		if pausedPosition then
+			playbackElapsed = pausedPosition
+			timeElapsedLabel.Text = formatTime(playbackElapsed)
+			local duration = getDuration()
+			if duration then
+				local fraction = math.clamp(playbackElapsed / duration, 0, 1)
+				progFill.Size = UDim2.new(fraction, 0, 1, 0)
+				miniFill.Size = UDim2.new(fraction, 0, 1, 0)
+			end
+		end
 	end
 end
+
+local function updateSeekPreview(screenX)
+	local duration = getDuration()
+	local width = progTrack.AbsoluteSize.X
+	if not duration or width <= 0 then return end
+	local fraction = math.clamp((screenX - progTrack.AbsolutePosition.X) / width, 0, 1)
+	playbackElapsed = duration * fraction
+	timeElapsedLabel.Text = formatTime(playbackElapsed)
+	progFill.Size = UDim2.new(fraction, 0, 1, 0)
+	miniFill.Size = UDim2.new(fraction, 0, 1, 0)
+end
+
+local function seekPlayback(position)
+	if not (isPlaying or isPaused) then return end
+	if not currentSongData or not getDuration() then
+		setStatus("Seeking needs a known track duration", C.warn)
+		return
+	end
+	if not THEME.requireBackend() then return end
+
+	local requestedPosition = math.max(0, position)
+	local ok, response = pcall(function()
+		return game:HttpGet(CONFIG.pythonServer .. ENDPOINTS.seek .. "?position=" .. HttpService:UrlEncode(tostring(requestedPosition)))
+	end)
+	local data
+	local decoded = ok and response and pcall(function()
+		data = HttpService:JSONDecode(response)
+	end)
+	if not decoded or type(data) ~= "table" or data.status ~= "ok" then
+		playbackElapsed = scrubOriginalPosition
+		timeElapsedLabel.Text = formatTime(playbackElapsed)
+		local duration = getDuration()
+		if duration then
+			local fraction = math.clamp(playbackElapsed / duration, 0, 1)
+			progFill.Size = UDim2.new(fraction, 0, 1, 0)
+			miniFill.Size = UDim2.new(fraction, 0, 1, 0)
+		end
+		setStatus((type(data) == "table" and data.error) or "Failed to seek", C.error)
+		return
+	end
+
+	playbackElapsed = tonumber(data.position) or requestedPosition
+	timeElapsedLabel.Text = formatTime(playbackElapsed)
+	local duration = getDuration()
+	if duration then
+		local fraction = math.clamp(playbackElapsed / duration, 0, 1)
+		progFill.Size = UDim2.new(fraction, 0, 1, 0)
+		miniFill.Size = UDim2.new(fraction, 0, 1, 0)
+	end
+	setStatus("Seeked to " .. formatTime(playbackElapsed), C.success)
+end
+
+progTrack.InputBegan:Connect(function(input)
+	local inputType = input.UserInputType
+	if inputType ~= Enum.UserInputType.MouseButton1 and inputType ~= Enum.UserInputType.Touch then return end
+	if not (isPlaying or isPaused) then return end
+	if not currentSongData or not getDuration() then return end
+	isScrubbing = true
+	scrubInputType = inputType
+	scrubOriginalPosition = playbackElapsed
+	updateSeekPreview(input.Position.X)
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if not isScrubbing then return end
+	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+		updateSeekPreview(input.Position.X)
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if not isScrubbing or input.UserInputType ~= scrubInputType then return end
+	isScrubbing = false
+	seekPlayback(playbackElapsed)
+end)
 
 function stopSong()
 	if not THEME.requireBackend() then return end
 	pcall(function() game:HttpGet(CONFIG.pythonServer .. ENDPOINTS.stop) end)
+	isScrubbing = false
 	isPlaying       = false
 	isPaused        = false
 	playbackElapsed = 0

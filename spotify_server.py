@@ -5,6 +5,7 @@ import subprocess
 import threading
 import time
 import os
+import math
 import requests
 from urllib.parse import urlparse, parse_qs
 import shutil
@@ -45,6 +46,7 @@ playback_lock = threading.Lock()
 playback_start_time = None   # timestamp when playback started (adjusted for seeks)
 paused_offset = 0.0          # seconds into track where we paused
 current_path = None          # currently playing file path
+current_duration = None      # known track duration in seconds
 
 app = Flask(__name__)
 
@@ -80,6 +82,41 @@ def check_dependencies():
 		logging.error("Missing dependencies: %s. Install ffmpeg/ffplay and ensure they're in PATH.", ", ".join(missing))
 		print(f"Error: Missing dependencies: {', '.join(missing)}. Install ffmpeg/ffplay and ensure they're in PATH.")
 		exit(1)
+
+
+def duration_seconds(value, milliseconds=False):
+	"""Normalize valid media durations to seconds."""
+	try:
+		duration = float(value)
+	except (TypeError, ValueError):
+		return None
+	if not math.isfinite(duration) or duration <= 0:
+		return None
+	return duration / 1000 if milliseconds else duration
+
+
+def get_audio_duration(path):
+	"""Read the cached audio file's duration when ffprobe is available."""
+	if not path:
+		return None
+	ffprobe = shutil.which("ffprobe")
+	if not ffprobe:
+		return None
+	try:
+		result = subprocess.run(
+			[
+				ffprobe, "-v", "error", "-show_entries", "format=duration",
+				"-of", "default=noprint_wrappers=1:nokey=1", path,
+			],
+			check=True,
+			capture_output=True,
+			text=True,
+			timeout=10,
+		)
+	except (OSError, subprocess.SubprocessError) as error:
+		logging.warning("Could not read audio duration for %s: %s", path, error)
+		return None
+	return duration_seconds(result.stdout.strip())
 
 
 def terminate_playback_process(process):
@@ -213,7 +250,8 @@ def fetch_song_data(spotify_link, client_id=None, client_secret=None):
 			"artist": ", ".join([artist["name"] for artist in track["artists"]]),
 			"image": track["album"]["images"][0]["url"] if track["album"]["images"] else "",
 			"preview_url": track["preview_url"],
-			"track_id": track_id
+			"track_id": track_id,
+			"duration": duration_seconds(track.get("duration_ms"), milliseconds=True)
 		}
 		
 		return song_data
@@ -360,7 +398,11 @@ def fetch_song_data_apple(apple_music_link):
 			"artist": artist,
 			"image": artwork_url,
 			"track_id": track_id,
-			"url": apple_music_link
+			"url": apple_music_link,
+			"duration": duration_seconds(
+				song.get("attributes", {}).get("durationInMillis"),
+				milliseconds=True
+			)
 		}
 		
 		return song_data
@@ -485,6 +527,7 @@ def spotify_fetch():
 	
 	audio_path = download_song(song_data)
 	song_data["path"] = audio_path
+	song_data["duration"] = get_audio_duration(audio_path) or song_data.get("duration")
 	
 	if song_data.get("image"):
 		album_art_path = download_and_cache_album_art(song_data["image"], song_data.get("track_id"))
@@ -514,6 +557,7 @@ def apple_fetch():
 	
 	audio_path = download_song(song_data)
 	song_data["path"] = audio_path
+	song_data["duration"] = get_audio_duration(audio_path) or song_data.get("duration")
 	
 	if song_data.get("image"):
 		album_art_path = download_and_cache_album_art(song_data["image"], song_data.get("track_id"))
@@ -560,12 +604,14 @@ def youtube_fetch():
 				audio_path = download_audio(video_id, link, is_url=True)
 				if not audio_path:
 					return jsonify({"error": "Failed to download audio"}), 500
+				duration = get_audio_duration(audio_path) or duration_seconds(info.get("duration"))
 				
 				song_data = {
 					"title": title,
 					"artist": "YouTube",
 					"image": thumbnail_url,
 					"track_id": video_id,
+					"duration": duration,
 					"path": audio_path
 				}
 
@@ -608,9 +654,10 @@ def youtube_fetch():
 @app.route("/play", methods=["GET"])
 def play():
 	"""Play song through microphone (supports starting from paused offset)"""
-	global current_process, is_paused, playback_start_time, paused_offset, current_path
+	global current_process, is_paused, playback_start_time, paused_offset, current_path, current_duration
 	
 	path = request.args.get("path")
+	duration = request.args.get("duration", type=float)
 	
 	if not path or not os.path.exists(path):
 		return jsonify({"error": "File not found"}), 400
@@ -620,6 +667,9 @@ def play():
 			if current_path != path:
 				paused_offset = 0.0
 				current_path = path
+				current_duration = duration if duration and math.isfinite(duration) and duration > 0 else None
+			elif duration and math.isfinite(duration) and duration > 0:
+				current_duration = duration
 			
 			if current_process:
 				terminate_playback_process(current_process)
@@ -723,7 +773,7 @@ def resume():
 @app.route("/stop", methods=["GET"])
 def stop():
 	"""Stop current song"""
-	global current_process, is_paused, playback_start_time, paused_offset, current_path
+	global current_process, is_paused, playback_start_time, paused_offset, current_path, current_duration
 	
 	with playback_lock:
 		if current_process:
@@ -734,22 +784,87 @@ def stop():
 		playback_start_time = None
 		paused_offset = 0.0
 		current_path = None
+		current_duration = None
 	
 	print("Song stopped")
 	return jsonify({"status": "stopped"}), 200
 
 @app.route("/status", methods=["GET"])
 def status():
-	"""Check if song is still playing"""
-	global current_process
-	
-	if not current_process:
-		return jsonify({"status": "stopped"}), 200
-	
-	if current_process.poll() is None:
-		return jsonify({"status": "playing"}), 200
-	else:
-		return jsonify({"status": "finished"}), 200
+	"""Return playback state and the server's current playback position."""
+	with playback_lock:
+		if is_paused:
+			state = "paused"
+			position = paused_offset
+		elif not current_process:
+			state = "stopped"
+			position = paused_offset
+		elif current_process.poll() is None:
+			state = "playing"
+			position = max(0.0, time.time() - playback_start_time) if playback_start_time else paused_offset
+		else:
+			state = "finished"
+			position = current_duration or (max(0.0, time.time() - playback_start_time) if playback_start_time else paused_offset)
+
+		if current_duration:
+			position = min(position, current_duration)
+		return jsonify({
+			"status": state,
+			"position": round(position, 3),
+			"duration": current_duration,
+		}), 200
+
+
+@app.route("/seek", methods=["GET"])
+def seek():
+	"""Seek by restarting ffplay at the requested position."""
+	global current_process, playback_start_time, paused_offset, current_duration, is_paused
+
+	try:
+		position = request.args.get("position", type=float)
+		if position is None or not math.isfinite(position) or position < 0:
+			return jsonify({"error": "A non-negative seek position is required"}), 400
+
+		with playback_lock:
+			if not current_path or not os.path.exists(current_path):
+				return jsonify({"error": "No track is loaded"}), 400
+			if current_duration:
+				position = min(position, max(0.0, current_duration - 0.25))
+
+			was_playing = bool(
+				current_process
+				and current_process.poll() is None
+				and not is_paused
+			)
+			if not was_playing and not is_paused:
+				return jsonify({"error": "Playback is neither playing nor paused"}), 400
+			next_process = None
+			if was_playing:
+				next_process = subprocess.Popen(
+					["ffplay", "-nodisp", "-autoexit", "-ss", str(position), current_path],
+					stdin=subprocess.PIPE,
+					stdout=subprocess.PIPE,
+					stderr=subprocess.PIPE
+				)
+				time.sleep(0.2)
+				if next_process.poll() is not None:
+					err = next_process.stderr.read().decode("utf-8", errors="ignore") if next_process.stderr else ""
+					return jsonify({"error": "ffplay failed to seek", "stderr": err}), 500
+
+			old_process = current_process
+			if was_playing and old_process:
+				terminate_playback_process(old_process)
+				current_process = next_process
+				playback_start_time = time.time() - position
+			else:
+				current_process = None
+				playback_start_time = None
+				is_paused = True
+			paused_offset = position
+
+		return jsonify({"status": "ok", "position": round(position, 3)}), 200
+	except Exception as e:
+		return jsonify({"error": str(e)}), 500
 
 @app.route("/search", methods=["GET"])
 def search():
@@ -775,6 +890,7 @@ def search():
 				title = video.get("title", "Unknown")
 				track_id = video.get("id", "unknown")
 				thumbnail_url = video.get("thumbnail", "")
+				duration = duration_seconds(video.get("duration"))
 		except AttributeError as ae:
 			# Workaround for yt-dlp bug with UrllibResponseAdapter
 			if "_http_error" in str(ae):
@@ -797,12 +913,14 @@ def search():
 		audio_path = download_audio(track_id, f"https://www.youtube.com/watch?v={track_id}", is_url=True)
 		if not audio_path:
 			return jsonify({"error": "Failed to download audio"}), 500
+		duration = get_audio_duration(audio_path) or duration
 		
 		song_data = {
 			"title": title,
 			"artist": "YouTube",
 			"track_id": track_id,
-			"path": audio_path
+			"path": audio_path,
+			"duration": duration
 		}
 		
 		if image_filename:
