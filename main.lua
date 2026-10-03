@@ -129,6 +129,8 @@ local THEME = {
 	strokes = {},
 	buttons = {},
 	names = {"Midnight", "Ocean", "Sunset", "Light"},
+	backendControls = {},
+	backendStatusInitialized = false,
 }
 if isfile and readfile and isfile(THEME.file) then
 	pcall(function()
@@ -978,16 +980,16 @@ hover(restoreBadge, C.surface, C.surfacePop, C.textSec, C.white)
 
 local modalBackdrop = make("TextButton", {
 	Name = "ModalBackdrop", Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = C.black,
-	BackgroundTransparency = 0.45, BorderSizePixel = 0, Visible = false, ZIndex = 90,
+	BackgroundTransparency = 1, BorderSizePixel = 0, Visible = false, ZIndex = 90,
 	Text = "", AutoButtonColor = false,
 }, screenGui)
 
 local creditsModal = make("Frame", {
-	Name = "CreditsModal", Size = UDim2.new(0.92, 0, 0.9, 0), Position = UDim2.new(0.5, 0, 0.5, 0),
+	Name = "CreditsModal", Size = UDim2.new(0.92, 0, 0, 320), Position = UDim2.new(0.5, 0, 0.5, 0),
 	BackgroundColor3 = C.surface, BorderSizePixel = 0, Visible = false, ZIndex = 100,
 }, screenGui)
 creditsModal.AnchorPoint = Vector2.new(0.5, 0.5)
-make("UISizeConstraint", {MaxSize = Vector2.new(520, 640)}, creditsModal)
+make("UISizeConstraint", {MaxSize = Vector2.new(520, 720)}, creditsModal)
 THEME.modalScale = make("UIScale", {Scale = 1}, creditsModal)
 corner(RADIUS.window, creditsModal)
 glassDecor(creditsModal, 22, {
@@ -1035,6 +1037,27 @@ THEME.activePage = "About"
 THEME.pageSequence = 0
 THEME.modalSequence = 0
 
+THEME.updateModalSize = function(animate)
+	local layout = THEME.pageLayouts[THEME.activePage]
+	if not layout then return end
+	local viewportHeight = 720
+	local camera = workspace.CurrentCamera
+	if camera and camera.ViewportSize.Y > 0 then
+		viewportHeight = camera.ViewportSize.Y
+	elseif screenGui.AbsoluteSize.Y > 0 then
+		viewportHeight = screenGui.AbsoluteSize.Y
+	end
+	local maxHeight = math.max(220, math.floor(viewportHeight * 0.84))
+	local contentHeight = layout.AbsoluteContentSize.Y + 120
+	local modalHeight = math.clamp(contentHeight, 220, maxHeight)
+	local targetSize = UDim2.new(0.92, 0, 0, modalHeight)
+	if animate and creditsModal.Visible then
+		tween(creditsModal, {Size = targetSize}, 0.2, Enum.EasingStyle.Quart)
+	else
+		creditsModal.Size = targetSize
+	end
+end
+
 THEME.tabBar = make("Frame", {
 	Name = "SettingsTabs", Size = UDim2.new(1, -32, 0, 34), Position = UDim2.new(0, 16, 0, 62),
 	BackgroundColor3 = C.surfaceHigh, BorderSizePixel = 0, ZIndex = 102,
@@ -1058,6 +1081,7 @@ for index, pageName in ipairs({"About", "Settings"}) do
 	}, THEME.pages[pageName])
 	THEME.pageLayouts[pageName]:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 		THEME.pages[capturedPage].CanvasSize = UDim2.new(0, 0, 0, THEME.pageLayouts[capturedPage].AbsoluteContentSize.Y + 8)
+		if capturedPage == THEME.activePage then THEME.updateModalSize(true) end
 	end)
 
 	local pageTab = make("TextButton", {
@@ -1122,6 +1146,7 @@ THEME.switchPage = function(pageName)
 	local sequence = THEME.pageSequence
 	THEME.activePage = pageName
 	THEME.refreshPageTabs()
+	THEME.updateModalSize(true)
 
 	local targetPage = THEME.pages[pageName]
 	targetPage.Visible = true
@@ -1340,6 +1365,22 @@ local function refreshWhitelistLabel()
 	wlListLabel.Text = "Allowed: " .. (#CONFIG.whitelist > 0 and table.concat(CONFIG.whitelist, ", ") or "None added")
 end
 refreshWhitelistLabel()
+THEME.updateModalSize(false)
+
+THEME.bindViewport = function()
+	if THEME.viewportConnection then
+		THEME.viewportConnection:Disconnect()
+		THEME.viewportConnection = nil
+	end
+	local camera = workspace.CurrentCamera
+	if camera then
+		THEME.viewportConnection = camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+			THEME.updateModalSize(true)
+		end)
+	end
+end
+THEME.bindViewport()
+workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(THEME.bindViewport)
 
 btnAddWL.MouseButton1Click:Connect(function()
 	local newName = wlInputBox.Text:match("^%s*(.-)%s*$") or ""
@@ -1365,15 +1406,14 @@ local function toggleCredits(visible)
 	local sequence = THEME.modalSequence
 	if visible then
 		refreshWhitelistLabel()
+		THEME.updateModalSize(false)
 		modalBackdrop.Visible = true
 		creditsModal.Visible = true
 		modalBackdrop.BackgroundTransparency = 1
 		THEME.modalScale.Scale = 0.94
-		tween(modalBackdrop, {BackgroundTransparency = 0.45}, 0.2)
 		tween(THEME.modalScale, {Scale = 1}, 0.24, Enum.EasingStyle.Back)
 	else
 		if not creditsModal.Visible then return end
-		tween(modalBackdrop, {BackgroundTransparency = 1}, 0.16)
 		tween(THEME.modalScale, {Scale = 0.96}, 0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 		task.delay(0.17, function()
 			if sequence ~= THEME.modalSequence then return end
@@ -1774,10 +1814,11 @@ function updateQueueUI()
 			Font = Enum.Font.GothamBold, TextSize = 10, BorderSizePixel = 0, AutoButtonColor = false,
 		}, item)
 		corner(RADIUS.pill, pb)
+		THEME.registerBackendControl(pb)
 		if currentAccent == C.youtube or currentAccent == C.apple then pb.TextColor3 = C.white end
 
 		pb.MouseButton1Click:Connect(function()
-			if not isPythonServerRunning() then setStatus("Python not running", C.error); return end
+			if not THEME.requireBackend() then return end
 			local s = songQueue[i]
 			if not s then return end
 			table.remove(songQueue, i)
@@ -1791,8 +1832,10 @@ function updateQueueUI()
 			Font = Enum.Font.GothamBold, TextSize = 9, BorderSizePixel = 0, AutoButtonColor = false,
 		}, item)
 		corner(RADIUS.pill, rb)
+		THEME.registerBackendControl(rb)
 		hover(rb, C.surfacePop, Color3.fromRGB(190, 50, 50), C.textMuted, C.white)
 		rb.MouseButton1Click:Connect(function()
+			if not THEME.requireBackend() then return end
 			table.remove(songQueue, i)
 			updateQueueUI()
 			setStatus("Removed track from queue", C.warn)
@@ -1806,6 +1849,7 @@ local function addToQueue(songData)
 end
 
 btnClearQueue.MouseButton1Click:Connect(function()
+	if not THEME.requireBackend() then return end
 	songQueue = {}
 	updateQueueUI()
 	setStatus("Queue cleared", C.warn)
@@ -1827,7 +1871,63 @@ function isPythonServerRunning()
 	return s and type(data) == "table" and data.status == "ok"
 end
 
+THEME.setBackendAvailable = function(available)
+	pythonRunning = available
+	for index = #THEME.backendControls, 1, -1 do
+		local control = THEME.backendControls[index]
+		if control.instance.Parent then
+			control.instance.Interactable = available
+			control.instance.BackgroundTransparency = available
+				and control.backgroundTransparency
+				or math.max(control.backgroundTransparency, 0.4)
+			if control.textTransparency ~= nil then
+				control.instance.TextTransparency = available
+					and control.textTransparency
+					or math.max(control.textTransparency, 0.45)
+			end
+		else
+			table.remove(THEME.backendControls, index)
+		end
+	end
+end
+
+THEME.registerBackendControl = function(instance)
+	local textTransparency
+	if instance:IsA("TextBox") or instance:IsA("TextButton") then
+		textTransparency = instance.TextTransparency
+	end
+	table.insert(THEME.backendControls, {
+		instance = instance,
+		backgroundTransparency = instance.BackgroundTransparency,
+		textTransparency = textTransparency,
+	})
+	instance.Interactable = pythonRunning
+	if not pythonRunning then
+		instance.BackgroundTransparency = math.max(instance.BackgroundTransparency, 0.4)
+		if instance:IsA("TextBox") or instance:IsA("TextButton") then
+			instance.TextTransparency = math.max(instance.TextTransparency, 0.45)
+		end
+	end
+end
+
+THEME.requireBackend = function()
+	local available = isPythonServerRunning()
+	THEME.setBackendAvailable(available)
+	if not available then
+		setStatus("Python offline  ·  Run: python spotify_server.py", C.error)
+	end
+	return available
+end
+
+for _, control in ipairs({
+	playHeroButton, stopButton, skipButton, miniPlayBtn, miniSkipBtn,
+	loadButton, inputBox, btnClearQueue,
+}) do
+	THEME.registerBackendControl(control)
+end
+
 function playNextInQueue()
+	if not THEME.requireBackend() then return end
 	if #songQueue > 0 then
 		local nextSong = table.remove(songQueue, 1)
 		updateQueueUI()
@@ -1943,15 +2043,11 @@ local function isPlayerWhitelisted(speaker, speakerPlayer)
 end
 
 function playSong()
+	if not THEME.requireBackend() then return end
 	if not currentSongData then
 		setStatus("No song loaded", C.error)
 		return
 	end
-	if not isPythonServerRunning() then
-		setStatus("Python server not running", C.error)
-		return
-	end
-
 	if isPaused then
 		isPaused  = false
 		isPlaying = true
@@ -1990,6 +2086,7 @@ end
 
 function pauseSong()
 	if not isPlaying or isPaused then return end
+	if not THEME.requireBackend() then return end
 	isPaused  = true
 	isPlaying = false
 	setTransportUI("paused")
@@ -2005,6 +2102,7 @@ function pauseSong()
 end
 
 function stopSong()
+	if not THEME.requireBackend() then return end
 	pcall(function() game:HttpGet(CONFIG.pythonServer .. ENDPOINTS.stop) end)
 	isPlaying       = false
 	isPaused        = false
@@ -2016,6 +2114,7 @@ function stopSong()
 end
 
 function skipSong()
+	if not THEME.requireBackend() then return end
 	pcall(function() game:HttpGet(CONFIG.pythonServer .. ENDPOINTS.stop) end)
 	task.wait(0.2)
 	if #songQueue > 0 then
@@ -2029,10 +2128,7 @@ function skipSong()
 end
 
 function searchAndPlaySong(query)
-	if not isPythonServerRunning() then
-		setStatus("Python server not running", C.error)
-		return
-	end
+	if not THEME.requireBackend() then return end
 	setStatus("Searching: " .. query, C.warn)
 	loadButton.Text = "Searching..."
 
@@ -2073,17 +2169,13 @@ function callPythonBackend(rawInput)
 		setStatus("Please enter a link or song name", C.warn)
 		return false
 	end
-	if not isPythonServerRunning() then
-		setStatus("Python server not running (run spotify_server.py)", C.error)
-		return false
-	end
-
 	local isUrl = text:find("^https?://") or text:find("spotify%.com") or text:find("youtube%.com") or text:find("youtu%.be") or text:find("music%.apple%.com")
 
 	if not isUrl then
 		searchAndPlaySong(text)
 		return true
 	end
+	if not THEME.requireBackend() then return false end
 
 	local detectedMode = serviceMode
 	if text:find("spotify%.com") then
@@ -2307,10 +2399,18 @@ updateQueueUI()
 popIn()
 
 task.spawn(function()
-	if isPythonServerRunning() then
-		pythonRunning = true
-		setStatus("Ready  ·  Python server connected", C.success)
-	else
-		setStatus("Python offline  ·  Run: python spotify_server.py", C.error)
+	while true do
+		local available = isPythonServerRunning()
+		local stateChanged = available ~= pythonRunning or not THEME.backendStatusInitialized
+		THEME.setBackendAvailable(available)
+		if stateChanged then
+			if available then
+				setStatus("Ready  ·  Python server connected", C.success)
+			else
+				setStatus("Python offline  ·  Run: python spotify_server.py", C.error)
+			end
+		end
+		THEME.backendStatusInitialized = true
+		task.wait(3)
 	end
 end)
