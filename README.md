@@ -69,9 +69,9 @@ In the project folder, run:
 python start_server.py
 ```
 
-The launcher checks the `main` branch of this repository for a newer `spotify_server.py`, validates its Python syntax, backs up the current file as `spotify_server.py.bak`, and installs the update before starting the server. Updates are checked each time you use the launcher; the running server is not interrupted to install updates.
+The launcher checks the `main` branch of this repository for a newer `spotify_server.py`, validates its Python syntax, backs up the current file to a timestamped `spotify_server.py.*.bak` file, and installs the update before starting the server. Updates are checked each time you use the launcher; the running server is not interrupted to install updates.
 
-If the GitHub check fails, the existing server version is started. If Git detects local changes to `spotify_server.py`, the launcher skips the update to protect those changes. Once the updater has installed a version, it records its checksum and can continue updating that version on future starts. To run the backend without checking for updates, use `python spotify_server.py`.
+Local changes to `spotify_server.py` are replaced when a newer version is downloaded, but the pre-update file is preserved in its timestamped backup. Restore or compare that backup if you need any local edits. If the GitHub check fails, the existing server version is started. To run the backend without checking for updates, use `python spotify_server.py`.
 
 The default address is `http://localhost:5000`. Check that it responds by opening [http://localhost:5000/health](http://localhost:5000/health); a running server returns `{"status":"ok"}`.
 
