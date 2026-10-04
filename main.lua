@@ -111,6 +111,22 @@ local THEME = {
 		textSec = Color3.fromRGB(235, 199, 199), textMuted = Color3.fromRGB(190, 143, 155),
 		accent = Color3.fromRGB(255, 130, 91),
 	},
+	Aurora = {
+		bg = Color3.fromRGB(14, 8, 30), surface = Color3.fromRGB(28, 15, 56),
+		surfaceHigh = Color3.fromRGB(120, 92, 176), surfacePop = Color3.fromRGB(140, 106, 198),
+		surfaceHover = Color3.fromRGB(160, 124, 216), border = Color3.fromRGB(196, 166, 240),
+		borderSub = Color3.fromRGB(160, 130, 212), textPrimary = Color3.fromRGB(250, 244, 255),
+		textSec = Color3.fromRGB(214, 198, 238), textMuted = Color3.fromRGB(156, 138, 190),
+		accent = Color3.fromRGB(178, 102, 255),
+	},
+	Mono = {
+		bg = Color3.fromRGB(9, 9, 11), surface = Color3.fromRGB(20, 20, 24),
+		surfaceHigh = Color3.fromRGB(255, 255, 253), surfacePop = Color3.fromRGB(254, 255, 255),
+		surfaceHover = Color3.fromRGB(253, 255, 255), border = Color3.fromRGB(255, 255, 255),
+		borderSub = Color3.fromRGB(255, 255, 252), textPrimary = Color3.fromRGB(245, 245, 247),
+		textSec = Color3.fromRGB(200, 200, 206), textMuted = Color3.fromRGB(138, 138, 148),
+		accent = Color3.fromRGB(236, 236, 240),
+	},
 	Light = {
 		bg = Color3.fromRGB(226, 233, 245), surface = Color3.fromRGB(246, 249, 255),
 		surfaceHigh = Color3.fromRGB(195, 208, 228), surfacePop = Color3.fromRGB(180, 197, 221),
@@ -129,9 +145,15 @@ local THEME = {
 	properties = {},
 	strokes = {},
 	buttons = {},
-	names = {"Midnight", "Ocean", "Sunset", "Light"},
+	names = {"Midnight", "Ocean", "Sunset", "Aurora", "Mono", "Light"},
 	backendControls = {},
 	backendStatusInitialized = false,
+	accentHooks = {},
+	options = {
+		panelTransparency = 0.28,
+		visStyle = "Bars",
+		beatGlow = true,
+	},
 }
 if isfile and readfile and isfile(THEME.file) then
 	pcall(function()
@@ -143,6 +165,17 @@ if isfile and readfile and isfile(THEME.file) then
 			and saved.pythonServer:match("^https?://[^/%s]+/?$") then
 			CONFIG.pythonServer = saved.pythonServer:gsub("/+$", "")
 		end
+		if type(saved) == "table" then
+			if tonumber(saved.panelTransparency) then
+				THEME.options.panelTransparency = math.clamp(tonumber(saved.panelTransparency), 0.05, 0.6)
+			end
+			if saved.visStyle == "Bars" or saved.visStyle == "Mirror" then
+				THEME.options.visStyle = saved.visStyle
+			end
+			if type(saved.beatGlow) == "boolean" then
+				THEME.options.beatGlow = saved.beatGlow
+			end
+		end
 	end)
 end
 for key, value in pairs(THEME.palettes[THEME.current]) do
@@ -150,6 +183,12 @@ for key, value in pairs(THEME.palettes[THEME.current]) do
 end
 
 local currentAccent = C.spotify
+
+local function onAccent()
+	local a = currentAccent
+	local luminance = 0.299 * a.R + 0.587 * a.G + 0.114 * a.B
+	return luminance > 0.55 and C.black or C.white
+end
 
 local RADIUS = {
 	window = UDim.new(0, 22),
@@ -190,6 +229,9 @@ THEME.savePreference = function()
 			writefile(THEME.file, HttpService:JSONEncode({
 				theme = THEME.current,
 				pythonServer = CONFIG.pythonServer,
+				panelTransparency = THEME.options.panelTransparency,
+				visStyle = THEME.options.visStyle,
+				beatGlow = THEME.options.beatGlow,
 			}))
 		end)
 	end
@@ -244,7 +286,7 @@ local function make(class, props, parent)
 		local value = props[property]
 		local token = value and THEME.getToken(value, property)
 		local statefulText = property == "TextColor3"
-			and (props.Name == "StatusLabel" or props.Name == "StatusPillText")
+			and (props.Name == "StatusLabel" or props.Name == "StatusPillText" or props.Name == "ServerPillText")
 		if token and not statefulText then
 			THEME.properties[inst] = THEME.properties[inst] or {}
 			THEME.properties[inst][property] = token
@@ -308,6 +350,20 @@ local function hover(btn, normal, over, textNormal, textOver)
 		if textNormal then p.TextColor3 = textNormalToken and THEME.color(textNormalToken) or textNormal end
 		tween(btn, p, 0.12)
 	end)
+end
+
+local function pressable(btn, depth)
+	depth = depth or 0.94
+	local scale = make("UIScale", {Scale = 1}, btn)
+	local function release()
+		tween(scale, {Scale = 1}, 0.16, Enum.EasingStyle.Back)
+	end
+	btn.MouseButton1Down:Connect(function()
+		tween(scale, {Scale = depth}, 0.07)
+	end)
+	btn.MouseButton1Up:Connect(release)
+	btn.MouseLeave:Connect(release)
+	return btn
 end
 
 local accentOrbs = {}
@@ -553,10 +609,35 @@ local function headerIconButton(name, text, xOff)
 	corner(RADIUS.btn, b)
 	stroke(C.borderSub, 1, 0.3, b)
 	hover(b, C.surfaceHigh, C.surfacePop, C.textSec, C.white)
+	pressable(b)
 	return b
 end
 local creditsButton  = headerIconButton("CreditsButton", "ℹ", -80)
 local headerQueueBtn = headerIconButton("HeaderQueueBtn", "≡", -44)
+
+local serverPill = make("TextButton", {
+	Name = "ServerPill", Size = UDim2.new(0, 88, 0, 24), Position = UDim2.new(1, -180, 0.5, -12),
+	BackgroundColor3 = C.surfaceHigh, Text = "", BorderSizePixel = 0, AutoButtonColor = false,
+}, header)
+corner(RADIUS.pill, serverPill)
+stroke(C.borderSub, 1, 0.3, serverPill)
+hover(serverPill, C.surfaceHigh, C.surfacePop)
+pressable(serverPill, 0.96)
+local serverPillDot = make("Frame", {
+	Size = UDim2.new(0, 7, 0, 7), Position = UDim2.new(0, 11, 0.5, -3.5),
+	BackgroundColor3 = C.warn, BorderSizePixel = 0,
+}, serverPill)
+corner(RADIUS.pill, serverPillDot)
+local serverPillText = make("TextLabel", {
+	Name = "ServerPillText", Size = UDim2.new(1, -28, 1, 0), Position = UDim2.new(0, 24, 0, 0),
+	BackgroundTransparency = 1, Text = "Checking", TextColor3 = C.textSec,
+	Font = Enum.Font.GothamBold, TextSize = 9, TextXAlignment = Enum.TextXAlignment.Left,
+}, serverPill)
+THEME.updateServerPill = function(available)
+	tween(serverPillDot, {BackgroundColor3 = available and C.success or C.error}, 0.2)
+	serverPillText.Text = available and "Online" or "Offline"
+	serverPillText.TextColor3 = available and C.textSec or C.error
+end
 
 local body = make("Frame", {
 	Name                   = "Body",
@@ -625,16 +706,23 @@ local modeTabs = make("Frame", {
 corner(RADIUS.pill, modeTabs)
 stroke(C.borderSub, 1, 0.3, modeTabs)
 
+local tabThumb = make("Frame", {
+	Name = "TabThumb", Size = UDim2.new(0, 93, 0, 26), Position = UDim2.new(0, 2, 0, 3),
+	BackgroundColor3 = C.spotify, BorderSizePixel = 0,
+}, modeTabs)
+corner(RADIUS.pill, tabThumb)
+
 local function makeTab(name, label, color, index)
 	local tab = make("TextButton", {
 		Name = "Tab_" .. name, Size = UDim2.new(0, 93, 0, 26),
 		Position = UDim2.new(0, 2 + (index - 1) * 95, 0, 3),
 		BackgroundColor3 = color,
-		BackgroundTransparency = (serviceMode == name) and 0 or 1,
+		BackgroundTransparency = 1,
 		TextColor3 = (serviceMode == name) and ((name == "spotify") and C.black or C.white) or C.textMuted,
 		Text = label, Font = Enum.Font.GothamBold, TextSize = 11, BorderSizePixel = 0, AutoButtonColor = false,
 	}, modeTabs)
 	corner(RADIUS.pill, tab)
+	pressable(tab, 0.96)
 	return tab
 end
 local tabSpotify = makeTab("spotify", "Spotify", C.spotify, 1)
@@ -644,31 +732,54 @@ local tabAuto    = makeTab("auto",    "Auto",    C.cyan,    4)
 
 THEME.refreshServiceModeTabs = function(animate)
 	local tabs = {
-		spotify = {btn = tabSpotify, color = C.spotify},
-		youtube = {btn = tabYouTube, color = C.youtube},
-		apple = {btn = tabApple, color = C.apple},
-		auto = {btn = tabAuto, color = C.cyan},
+		spotify = {btn = tabSpotify, color = C.spotify, index = 1, dark = true},
+		youtube = {btn = tabYouTube, color = C.youtube, index = 2},
+		apple   = {btn = tabApple,   color = C.apple,   index = 3},
+		auto    = {btn = tabAuto,    color = C.cyan,    index = 4, dark = true},
 	}
 	for mode, tab in pairs(tabs) do
 		local selected = mode == serviceMode
-		local props = selected and {
-			BackgroundColor3 = tab.color, BackgroundTransparency = 0,
-			TextColor3 = (mode == "spotify" or mode == "auto") and C.black or C.white,
-		} or {BackgroundTransparency = 1, TextColor3 = C.textMuted}
+		local textColor = selected and (tab.dark and C.black or C.white) or C.textMuted
 		if animate then
-			tween(tab.btn, props, 0.15)
+			tween(tab.btn, {TextColor3 = textColor}, 0.15)
 		else
-			for property, value in pairs(props) do tab.btn[property] = value end
+			tab.btn.TextColor3 = textColor
+		end
+		if selected then
+			local position = UDim2.new(0, 2 + (tab.index - 1) * 95, 0, 3)
+			if animate then
+				tween(tabThumb, {Position = position, BackgroundColor3 = tab.color}, 0.28, Enum.EasingStyle.Quart)
+			else
+				tabThumb.Position = position
+				tabThumb.BackgroundColor3 = tab.color
+			end
 		end
 	end
 end
+THEME.refreshServiceModeTabs(false)
 
-local songTitle = make("TextLabel", {
-	Name = "SongTitle", Size = UDim2.new(1, -86, 0, 28), Position = UDim2.new(0, 0, 0, 46),
-	BackgroundTransparency = 1, Text = "Nothing playing", TextColor3 = C.textPrimary,
-	Font = Enum.Font.GothamBold, TextSize = 20, TextXAlignment = Enum.TextXAlignment.Left,
-	TextTruncate = Enum.TextTruncate.AtEnd,
+local songTitleClip = make("Frame", {
+	Name = "SongTitleClip", Size = UDim2.new(1, -86, 0, 28), Position = UDim2.new(0, 0, 0, 46),
+	BackgroundTransparency = 1, ClipsDescendants = true,
 }, rightCol)
+local songTitle = make("TextLabel", {
+	Name = "SongTitle", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
+	Text = "Nothing playing", TextColor3 = C.textPrimary,
+	Font = Enum.Font.GothamBold, TextSize = 20, TextXAlignment = Enum.TextXAlignment.Left,
+	TextTruncate = Enum.TextTruncate.None,
+}, songTitleClip)
+
+local marquee = {t = 0, overflow = 0}
+local function refreshMarquee()
+	local clipWidth = songTitleClip.AbsoluteSize.X
+	local textWidth = songTitle.TextBounds.X
+	marquee.t = 0
+	marquee.overflow = math.max(0, textWidth + 8 - clipWidth)
+	songTitle.Size = UDim2.new(0, math.max(clipWidth, textWidth + 8), 1, 0)
+	songTitle.Position = UDim2.new(0, 0, 0, 0)
+end
+songTitle:GetPropertyChangedSignal("Text"):Connect(function() task.defer(refreshMarquee) end)
+songTitleClip:GetPropertyChangedSignal("AbsoluteSize"):Connect(refreshMarquee)
 
 local songArtist = make("TextLabel", {
 	Name = "SongArtist", Size = UDim2.new(1, -86, 0, 18), Position = UDim2.new(0, 0, 0, 75),
@@ -708,6 +819,18 @@ local progKnob = make("Frame", {
 }, progFill)
 corner(RADIUS.pill, progKnob)
 
+local seekTip = make("Frame", {
+	Name = "SeekTip", Size = UDim2.new(0, 48, 0, 20), Position = UDim2.new(0, 0, 0, 79),
+	BackgroundColor3 = C.bg, BackgroundTransparency = 0.1, BorderSizePixel = 0,
+	Visible = false, ZIndex = 20,
+}, rightCol)
+corner(RADIUS.pill, seekTip)
+stroke(C.borderSub, 1, 0.2, seekTip)
+local seekTipText = make("TextLabel", {
+	Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "00:00",
+	TextColor3 = C.textPrimary, Font = Enum.Font.GothamBold, TextSize = 10, ZIndex = 21,
+}, seekTip)
+
 local timeElapsedLabel = make("TextLabel", {
 	Name = "TimeElapsed", Size = UDim2.new(0, 60, 0, 14), Position = UDim2.new(0, 0, 0, 122),
 	BackgroundTransparency = 1, Text = "00:00", TextColor3 = C.textMuted,
@@ -740,6 +863,7 @@ local function roundButton(name, text, size, bg, fg, textSize)
 		Text = text, Font = Enum.Font.GothamBold, TextSize = textSize, BorderSizePixel = 0, AutoButtonColor = false,
 	}, transport)
 	corner(RADIUS.pill, b)
+	pressable(b, size > 50 and 0.92 or 0.9)
 	return b
 end
 
@@ -763,6 +887,7 @@ local queueToggleBtn = make("TextButton", {
 corner(RADIUS.btn, queueToggleBtn)
 stroke(C.borderSub, 1, 0.2, queueToggleBtn)
 hover(queueToggleBtn, C.surfaceHigh, C.surfacePop, C.textSec, C.white)
+pressable(queueToggleBtn)
 
 local inputRow = make("Frame", {
 	Name = "InputRow", Size = UDim2.new(1, 0, 0, 42), Position = UDim2.new(0, 0, 0, 220),
@@ -820,6 +945,7 @@ local loadButton = make("TextButton", {
 corner(RADIUS.input, loadButton)
 loadButton.MouseEnter:Connect(function() tween(loadButton, {BackgroundTransparency = 0.15}, 0.12) end)
 loadButton.MouseLeave:Connect(function() tween(loadButton, {BackgroundTransparency = 0}, 0.12) end)
+pressable(loadButton, 0.95)
 
 local mainNotice = make("Frame", {
 	Name = "UsageNotice", Size = UDim2.new(1, -32, 0, 34), Position = UDim2.new(0, 16, 0, 338),
@@ -890,7 +1016,7 @@ make("Frame", {
 
 make("TextLabel", {
 	Size = UDim2.new(0, 140, 1, 0), Position = UDim2.new(0, 16, 0, 0), BackgroundTransparency = 1,
-	Text = "Up Next", TextColor3 = C.textPrimary, Font = Enum.Font.GothamBold, TextSize = 14,
+	Text = "Queue", TextColor3 = C.textPrimary, Font = Enum.Font.GothamBold, TextSize = 14,
 	TextXAlignment = Enum.TextXAlignment.Left,
 }, qHdr)
 
@@ -902,9 +1028,45 @@ local btnClearQueue = make("TextButton", {
 corner(RADIUS.btn, btnClearQueue)
 stroke(C.borderSub, 1, 0.3, btnClearQueue)
 hover(btnClearQueue, C.surfaceHigh, Color3.fromRGB(190, 50, 50), C.textSec, C.white)
+pressable(btnClearQueue)
+
+local qNow = make("Frame", {
+	Name = "QueueNowPlaying", Size = UDim2.new(1, -16, 0, 60), Position = UDim2.new(0, 8, 0, 56),
+	BackgroundColor3 = C.surfacePop, BorderSizePixel = 0,
+}, queueFrame)
+corner(RADIUS.card, qNow)
+stroke(C.borderSub, 1, 0.2, qNow)
+local qNowArt = make("ImageLabel", {
+	Name = "NowArt", Size = UDim2.new(0, 42, 0, 42), Position = UDim2.new(0, 9, 0.5, -21),
+	BackgroundColor3 = C.surfaceHigh, BorderSizePixel = 0,
+	Image = "rbxasset://textures/ui/InGameMenu/Modern/ic-album@2x.png",
+	ScaleType = Enum.ScaleType.Crop, ImageColor3 = C.textMuted,
+}, qNow)
+corner(UDim.new(0, 9), qNowArt)
+local qNowLabel = make("TextLabel", {
+	Size = UDim2.new(1, -70, 0, 12), Position = UDim2.new(0, 60, 0, 9), BackgroundTransparency = 1,
+	Text = "NOW PLAYING", TextColor3 = C.spotify, Font = Enum.Font.GothamBold, TextSize = 8,
+	TextXAlignment = Enum.TextXAlignment.Left,
+}, qNow)
+local qNowTitle = make("TextLabel", {
+	Size = UDim2.new(1, -70, 0, 16), Position = UDim2.new(0, 60, 0, 22), BackgroundTransparency = 1,
+	Text = "Nothing playing", TextColor3 = C.textPrimary, Font = Enum.Font.GothamBold, TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
+}, qNow)
+local qNowArtist = make("TextLabel", {
+	Size = UDim2.new(1, -70, 0, 14), Position = UDim2.new(0, 60, 0, 39), BackgroundTransparency = 1,
+	Text = "Queue is idle", TextColor3 = C.textMuted, Font = Enum.Font.Gotham, TextSize = 9,
+	TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
+}, qNow)
+
+local qSectionLabel = make("TextLabel", {
+	Size = UDim2.new(1, -32, 0, 14), Position = UDim2.new(0, 16, 0, 124), BackgroundTransparency = 1,
+	Text = "UP NEXT  ·  0", TextColor3 = C.textMuted, Font = Enum.Font.GothamBold, TextSize = 9,
+	TextXAlignment = Enum.TextXAlignment.Left,
+}, queueFrame)
 
 local queueList = make("ScrollingFrame", {
-	Name = "QueueList", Size = UDim2.new(1, -16, 1, -62), Position = UDim2.new(0, 8, 0, 56),
+	Name = "QueueList", Size = UDim2.new(1, -16, 1, -148), Position = UDim2.new(0, 8, 0, 142),
 	BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
 	ScrollBarImageColor3 = C.border, CanvasSize = UDim2.new(0, 0, 0, 0),
 	AutomaticCanvasSize = Enum.AutomaticSize.Y,
@@ -915,8 +1077,8 @@ make("UIListLayout", {
 }, queueList)
 
 local emptyQueueLabel = make("TextLabel", {
-	Name = "EmptyQueueLabel", Size = UDim2.new(1, -20, 0, 100), Position = UDim2.new(0, 10, 0, 130),
-	BackgroundTransparency = 1, Text = "🎶\nQueue is empty\nPaste links or search songs to add!",
+	Name = "EmptyQueueLabel", Size = UDim2.new(1, -20, 0, 100), Position = UDim2.new(0, 10, 0, 190),
+	BackgroundTransparency = 1, Text = "🎶\nNothing queued\nPaste links or search songs to add!",
 	TextColor3 = C.textMuted, Font = Enum.Font.Gotham, TextSize = 11, TextWrapped = true, Visible = true,
 }, queueFrame)
 
@@ -955,6 +1117,7 @@ local miniPlayBtn = make("TextButton", {
 	TextSize = 12, BorderSizePixel = 0, AutoButtonColor = false,
 }, miniFrame)
 corner(RADIUS.pill, miniPlayBtn)
+pressable(miniPlayBtn, 0.9)
 
 local miniSkipBtn = make("TextButton", {
 	Name = "MiniSkipBtn", Size = UDim2.new(0, 28, 0, 28), Position = UDim2.new(1, -74, 0, 11),
@@ -963,6 +1126,7 @@ local miniSkipBtn = make("TextButton", {
 }, miniFrame)
 corner(RADIUS.pill, miniSkipBtn)
 hover(miniSkipBtn, C.surfaceHigh, C.surfacePop, C.textSec, C.white)
+pressable(miniSkipBtn, 0.9)
 
 local miniExpandBtn = make("TextButton", {
 	Name = "MiniExpandBtn", Size = UDim2.new(0, 28, 0, 28), Position = UDim2.new(1, -40, 0, 11),
@@ -971,6 +1135,7 @@ local miniExpandBtn = make("TextButton", {
 }, miniFrame)
 corner(RADIUS.pill, miniExpandBtn)
 hover(miniExpandBtn, C.surfacePop, C.surfaceHover, C.white, C.white)
+pressable(miniExpandBtn, 0.9)
 
 local miniTrack = make("Frame", {
 	Size = UDim2.new(1, -24, 0, 3), Position = UDim2.new(0, 12, 1, -7),
@@ -990,6 +1155,7 @@ local restoreBadge = make("TextButton", {
 corner(RADIUS.pill, restoreBadge)
 stroke(C.border, 1, 0.4, restoreBadge)
 hover(restoreBadge, C.surface, C.surfacePop, C.textSec, C.white)
+pressable(restoreBadge, 0.95)
 
 local modalBackdrop = make("TextButton", {
 	Name = "ModalBackdrop", Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = C.black,
@@ -1040,6 +1206,7 @@ local closeCreditsBtn = make("TextButton", {
 corner(RADIUS.pill, closeCreditsBtn)
 stroke(C.borderSub, 1, 0.25, closeCreditsBtn)
 hover(closeCreditsBtn, C.surfacePop, Color3.fromRGB(220, 60, 60), C.textSec, C.white)
+pressable(closeCreditsBtn, 0.9)
 
 THEME.pageTabs = {}
 THEME.pages = {}
@@ -1048,6 +1215,7 @@ THEME.pageVisuals = {}
 THEME.pagePositions = {}
 THEME.activePage = "About"
 THEME.pageSequence = 0
+THEME.pageTransitionActive = false
 THEME.modalSequence = 0
 
 THEME.updateModalSize = function(animate)
@@ -1078,6 +1246,12 @@ THEME.tabBar = make("Frame", {
 corner(RADIUS.pill, THEME.tabBar)
 stroke(C.borderSub, 1, 0.3, THEME.tabBar)
 
+THEME.pageThumb = make("Frame", {
+	Name = "PageThumb", Size = UDim2.new(0.5, -4, 1, -4), Position = UDim2.new(0, 2, 0, 2),
+	BackgroundColor3 = currentAccent, BorderSizePixel = 0, ZIndex = 103,
+}, THEME.tabBar)
+corner(RADIUS.pill, THEME.pageThumb)
+
 for index, pageName in ipairs({"About", "Settings"}) do
 	local capturedPage = pageName
 	THEME.pages[pageName] = make("ScrollingFrame", {
@@ -1100,11 +1274,10 @@ for index, pageName in ipairs({"About", "Settings"}) do
 	local pageTab = make("TextButton", {
 		Name = "Tab" .. pageName, Size = UDim2.new(0.5, -4, 1, -4),
 		Position = UDim2.new((index - 1) * 0.5, 2, 0, 2),
-		BackgroundColor3 = pageName == THEME.activePage and currentAccent or C.surfaceHigh,
-		BackgroundTransparency = pageName == THEME.activePage and 0 or 1,
-		Text = pageName, TextColor3 = pageName == THEME.activePage and C.white or C.textMuted,
+		BackgroundColor3 = C.surfaceHigh, BackgroundTransparency = 1,
+		Text = pageName, TextColor3 = pageName == THEME.activePage and onAccent() or C.textMuted,
 		Font = Enum.Font.GothamBold, TextSize = 11, BorderSizePixel = 0, AutoButtonColor = false,
-		ZIndex = 103,
+		ZIndex = 104,
 	}, THEME.tabBar)
 	corner(RADIUS.pill, pageTab)
 	THEME.pageTabs[pageName] = pageTab
@@ -1114,15 +1287,17 @@ for index, pageName in ipairs({"About", "Settings"}) do
 end
 
 THEME.refreshPageTabs = function()
-	for _, pageName in ipairs({"About", "Settings"}) do
+	for index, pageName in ipairs({"About", "Settings"}) do
 		local selected = pageName == THEME.activePage
 		tween(THEME.pageTabs[pageName], {
-			BackgroundColor3 = selected and currentAccent or C.surfaceHigh,
-			BackgroundTransparency = selected and 0 or 1,
-			TextColor3 = selected
-			and ((currentAccent == C.spotify or currentAccent == C.cyan) and C.black or C.white)
-			or C.textMuted,
+			TextColor3 = selected and onAccent() or C.textMuted,
 		}, 0.18)
+		if selected then
+			tween(THEME.pageThumb, {
+				Position = UDim2.new((index - 1) * 0.5, 2, 0, 2),
+				BackgroundColor3 = currentAccent,
+			}, 0.26, Enum.EasingStyle.Quart)
+		end
 	end
 end
 THEME.refreshPageTabs()
@@ -1157,6 +1332,8 @@ THEME.switchPage = function(pageName)
 	if not THEME.pages[pageName] or pageName == THEME.activePage then return end
 	THEME.pageSequence = THEME.pageSequence + 1
 	local sequence = THEME.pageSequence
+	if not THEME.pageTransitionActive then THEME.pageVisuals = {} end
+	THEME.pageTransitionActive = true
 	THEME.activePage = pageName
 	THEME.refreshPageTabs()
 	THEME.updateModalSize(true)
@@ -1219,6 +1396,7 @@ THEME.switchPage = function(pageName)
 				page.Position = THEME.pagePositions[name]
 			end
 		end
+		THEME.pageTransitionActive = false
 	end)
 end
 
@@ -1239,7 +1417,127 @@ local function cmLabel(parent, props)
 	return make("TextLabel", props, parent)
 end
 
-THEME.card = cmCard(THEME.pages.Settings, 86, 1)
+local function makeToggle(parent, y, initial, onChange)
+	local btn = make("TextButton", {
+		Size = UDim2.new(0, 38, 0, 20), Position = UDim2.new(1, -52, 0, y),
+		BackgroundColor3 = C.surfacePop, Text = "", AutoButtonColor = false, BorderSizePixel = 0, ZIndex = 103,
+	}, parent)
+	corner(RADIUS.pill, btn)
+	stroke(C.borderSub, 1, 0.3, btn)
+	local state = initial
+	local onFill = make("Frame", {
+		Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = currentAccent,
+		BackgroundTransparency = state and 0 or 1, BorderSizePixel = 0, ZIndex = 103,
+	}, btn)
+	corner(RADIUS.pill, onFill)
+	local knob = make("Frame", {
+		Size = UDim2.new(0, 14, 0, 14),
+		Position = state and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7),
+		BackgroundColor3 = C.white, BorderSizePixel = 0, ZIndex = 104,
+	}, btn)
+	corner(RADIUS.pill, knob)
+	table.insert(THEME.accentHooks, function() onFill.BackgroundColor3 = currentAccent end)
+	btn.MouseButton1Click:Connect(function()
+		state = not state
+		tween(onFill, {BackgroundTransparency = state and 0 or 1}, 0.18)
+		tween(knob, {Position = state and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7)}, 0.2, Enum.EasingStyle.Back)
+		onChange(state)
+	end)
+	return btn
+end
+
+local function makeSlider(parent, y, initial, onChange, onCommit)
+	local zone = make("Frame", {
+		Size = UDim2.new(1, -28, 0, 22), Position = UDim2.new(0, 14, 0, y),
+		BackgroundTransparency = 1, Active = true, ZIndex = 103,
+	}, parent)
+	local track = make("Frame", {
+		Size = UDim2.new(1, 0, 0, 6), Position = UDim2.new(0, 0, 0.5, -3),
+		BackgroundColor3 = C.surfacePop, BorderSizePixel = 0, ZIndex = 103,
+	}, zone)
+	corner(RADIUS.pill, track)
+	local fill = make("Frame", {
+		Size = UDim2.new(initial, 0, 1, 0), BackgroundColor3 = currentAccent, BorderSizePixel = 0, ZIndex = 104,
+	}, track)
+	corner(RADIUS.pill, fill)
+	local knob = make("Frame", {
+		Size = UDim2.new(0, 14, 0, 14), Position = UDim2.new(1, -7, 0.5, -7),
+		BackgroundColor3 = C.white, BorderSizePixel = 0, ZIndex = 105,
+	}, fill)
+	corner(RADIUS.pill, knob)
+	table.insert(THEME.accentHooks, function() fill.BackgroundColor3 = currentAccent end)
+
+	local dragging, value = false, initial
+	local function setFromX(x)
+		local width = track.AbsoluteSize.X
+		if width <= 0 then return end
+		value = math.clamp((x - track.AbsolutePosition.X) / width, 0, 1)
+		fill.Size = UDim2.new(value, 0, 1, 0)
+		onChange(value)
+	end
+	zone.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			setFromX(input.Position.X)
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			setFromX(input.Position.X)
+		end
+	end)
+	UserInputService.InputEnded:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then
+			dragging = false
+			if onCommit then onCommit(value) end
+		end
+	end)
+	return zone
+end
+
+local function makeSegmented(parent, y, options, initial, width, onChange)
+	local holder = make("Frame", {
+		Size = UDim2.new(0, width, 0, 24), Position = UDim2.new(1, -(width + 14), 0, y),
+		BackgroundColor3 = C.surfacePop, BorderSizePixel = 0, ZIndex = 103,
+	}, parent)
+	corner(RADIUS.pill, holder)
+	stroke(C.borderSub, 1, 0.3, holder)
+	local segmentWidth = (width - 4) / #options
+	local selectedIndex = table.find(options, initial) or 1
+	local thumb = make("Frame", {
+		Size = UDim2.new(0, segmentWidth, 0, 20), Position = UDim2.new(0, 2 + (selectedIndex - 1) * segmentWidth, 0, 2),
+		BackgroundColor3 = currentAccent, BorderSizePixel = 0, ZIndex = 104,
+	}, holder)
+	corner(RADIUS.pill, thumb)
+	local buttons = {}
+	local function refreshText()
+		for index, button in ipairs(buttons) do
+			button.TextColor3 = index == selectedIndex and onAccent() or C.textMuted
+		end
+	end
+	for index, option in ipairs(options) do
+		local button = make("TextButton", {
+			Size = UDim2.new(0, segmentWidth, 0, 20), Position = UDim2.new(0, 2 + (index - 1) * segmentWidth, 0, 2),
+			BackgroundTransparency = 1, Text = option, TextColor3 = C.textMuted,
+			Font = Enum.Font.GothamBold, TextSize = 10, BorderSizePixel = 0, AutoButtonColor = false, ZIndex = 105,
+		}, holder)
+		buttons[index] = button
+		button.MouseButton1Click:Connect(function()
+			selectedIndex = index
+			tween(thumb, {Position = UDim2.new(0, 2 + (index - 1) * segmentWidth, 0, 2)}, 0.22, Enum.EasingStyle.Quart)
+			refreshText()
+			onChange(option)
+		end)
+	end
+	refreshText()
+	table.insert(THEME.accentHooks, function()
+		thumb.BackgroundColor3 = currentAccent
+		refreshText()
+	end)
+	return holder
+end
+
+THEME.card = cmCard(THEME.pages.Settings, 146, 1)
 cmLabel(THEME.card, {
 	Size = UDim2.new(1, -20, 0, 16), Position = UDim2.new(0, 14, 0, 8),
 	Text = "APPEARANCE", TextColor3 = C.textMuted, Font = Enum.Font.GothamBold, TextSize = 9,
@@ -1249,27 +1547,42 @@ THEME.currentLabel = cmLabel(THEME.card, {
 	Text = THEME.current .. " theme", TextColor3 = C.textSec, Font = Enum.Font.Gotham, TextSize = 9,
 	TextXAlignment = Enum.TextXAlignment.Right,
 })
+local themeGrid = make("Frame", {
+	Size = UDim2.new(1, -28, 0, 104), Position = UDim2.new(0, 14, 0, 32),
+	BackgroundTransparency = 1, ZIndex = 102,
+}, THEME.card)
 for index, themeName in ipairs(THEME.names) do
 	local capturedTheme = themeName
+	local column = (index - 1) % 3
+	local row = math.floor((index - 1) / 3)
+	local palette = THEME.palettes[capturedTheme]
 	local themeButton = make("TextButton", {
-		Name = "Theme_" .. themeName, Size = UDim2.new(0.25, -7, 0, 42),
-		Position = UDim2.new((index - 1) * 0.25, 2, 0, 34),
+		Name = "Theme_" .. themeName, Size = UDim2.new(1 / 3, -6, 0, 48),
+		Position = UDim2.new(column / 3, column == 0 and 0 or 3, 0, row * 56),
 		BackgroundColor3 = C.surfacePop, TextColor3 = C.textSec, Text = "",
 		Font = Enum.Font.GothamBold, TextSize = 9, BorderSizePixel = 0,
 		AutoButtonColor = false, ZIndex = 103,
-	}, THEME.card)
+	}, themeGrid)
 	corner(RADIUS.btn, themeButton)
 	local themeOutline = stroke(C.borderSub, 1, 0.25, themeButton)
-	local preview = make("Frame", {
-		Size = UDim2.new(0, 30, 0, 4), Position = UDim2.new(0, 8, 0, 7),
-		BackgroundColor3 = THEME.palettes[capturedTheme].accent, BorderSizePixel = 0, ZIndex = 104,
-	}, themeButton)
-	corner(RADIUS.pill, preview)
+	pressable(themeButton, 0.96)
+	local swatches = {palette.bg, palette.textSec, palette.accent}
+	for swatchIndex, swatchColor in ipairs(swatches) do
+		local dot = make("Frame", {
+			Size = UDim2.new(0, 11, 0, 11), Position = UDim2.new(0, 10 + (swatchIndex - 1) * 14, 0, 9),
+			BackgroundColor3 = swatchColor, BorderSizePixel = 0, ZIndex = 104,
+		}, themeButton)
+		corner(RADIUS.pill, dot)
+		make("UIStroke", {
+			Color = Color3.new(1, 1, 1), Transparency = 0.7, Thickness = 1,
+			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+		}, dot)
+	end
 	local nameLabel = make("TextLabel", {
-		Size = UDim2.new(1, -10, 0, 14), Position = UDim2.new(0, 5, 0, 19),
+		Size = UDim2.new(1, -14, 0, 14), Position = UDim2.new(0, 10, 0, 27),
 		BackgroundTransparency = 1, Text = capturedTheme, TextColor3 = C.textSec,
-		Font = Enum.Font.GothamBold, TextSize = 9, TextTruncate = Enum.TextTruncate.AtEnd,
-		ZIndex = 104,
+		Font = Enum.Font.GothamBold, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 104,
 	}, themeButton)
 	THEME.buttons[capturedTheme] = {button = themeButton, outline = themeOutline, label = nameLabel}
 	themeButton.MouseButton1Click:Connect(function()
@@ -1291,6 +1604,58 @@ THEME.refreshSelection = function()
 		}, 0.18)
 	end
 end
+
+THEME.applyPanelTransparency = function()
+	local transparency = THEME.options.panelTransparency
+	for _, panel in ipairs({mainFrame, queueFrame, miniFrame, creditsModal}) do
+		panel.BackgroundTransparency = transparency
+	end
+end
+
+local interfaceCard = cmCard(THEME.pages.Settings, 150, 2)
+cmLabel(interfaceCard, {
+	Size = UDim2.new(1, -20, 0, 16), Position = UDim2.new(0, 14, 0, 8),
+	Text = "INTERFACE", TextColor3 = C.textMuted, Font = Enum.Font.GothamBold, TextSize = 9,
+})
+cmLabel(interfaceCard, {
+	Size = UDim2.new(0.6, 0, 0, 16), Position = UDim2.new(0, 14, 0, 30),
+	Text = "Glass opacity", TextColor3 = C.textSec, Font = Enum.Font.Gotham, TextSize = 11,
+})
+local opacityValueLabel = cmLabel(interfaceCard, {
+	Size = UDim2.new(0, 50, 0, 16), Position = UDim2.new(1, -64, 0, 30),
+	Text = "", TextColor3 = C.textMuted, Font = Enum.Font.GothamBold, TextSize = 10,
+	TextXAlignment = Enum.TextXAlignment.Right,
+})
+local function transparencyToOpacity(transparency)
+	return math.clamp((0.6 - transparency) / 0.55, 0, 1)
+end
+opacityValueLabel.Text = string.format("%d%%", math.floor(transparencyToOpacity(THEME.options.panelTransparency) * 100 + 0.5))
+makeSlider(interfaceCard, 50, transparencyToOpacity(THEME.options.panelTransparency), function(value)
+	THEME.options.panelTransparency = 0.6 - 0.55 * value
+	THEME.applyPanelTransparency()
+	opacityValueLabel.Text = string.format("%d%%", math.floor(value * 100 + 0.5))
+end, function()
+	THEME.savePreference()
+end)
+
+cmLabel(interfaceCard, {
+	Size = UDim2.new(0.55, 0, 0, 16), Position = UDim2.new(0, 14, 0, 90),
+	Text = "Visualizer style", TextColor3 = C.textSec, Font = Enum.Font.Gotham, TextSize = 11,
+})
+makeSegmented(interfaceCard, 86, {"Bars", "Mirror"}, THEME.options.visStyle, 132, function(option)
+	THEME.options.visStyle = option
+	THEME.savePreference()
+end)
+
+cmLabel(interfaceCard, {
+	Size = UDim2.new(0.55, 0, 0, 16), Position = UDim2.new(0, 14, 0, 120),
+	Text = "Beat-reactive glow", TextColor3 = C.textSec, Font = Enum.Font.Gotham, TextSize = 11,
+})
+makeToggle(interfaceCard, 118, THEME.options.beatGlow, function(state)
+	THEME.options.beatGlow = state
+	THEME.savePreference()
+end)
+
 local c1 = cmCard(THEME.pages.About, 54, 1)
 cmLabel(c1, {
 	Size = UDim2.new(1, -16, 0, 20), Position = UDim2.new(0, 14, 0, 8),
@@ -1328,6 +1693,7 @@ local copyDiscordBtn = make("TextButton", {
 	Font = Enum.Font.GothamBold, TextSize = 10, BorderSizePixel = 0, ZIndex = 103, AutoButtonColor = false,
 }, c3)
 corner(RADIUS.btn, copyDiscordBtn)
+pressable(copyDiscordBtn, 0.94)
 copyDiscordBtn.MouseButton1Click:Connect(function()
 	if setclipboard then
 		setclipboard("https://discord.gg/NCEfg4rKPC")
@@ -1336,7 +1702,18 @@ copyDiscordBtn.MouseButton1Click:Connect(function()
 	end
 end)
 
-local serverCard = cmCard(THEME.pages.Settings, 96, 2)
+local tipsCard = cmCard(THEME.pages.About, 100, 4)
+cmLabel(tipsCard, {
+	Size = UDim2.new(1, -16, 0, 14), Position = UDim2.new(0, 14, 0, 9),
+	Text = "SHORTCUTS & TIPS", TextColor3 = C.textMuted, Font = Enum.Font.GothamBold, TextSize = 9,
+})
+cmLabel(tipsCard, {
+	Size = UDim2.new(1, -28, 0, 64), Position = UDim2.new(0, 14, 0, 28),
+	Text = "[R-Shift]  hide / show the player\nDrag the header to move the window\nClick or drag the progress bar to seek\n≡ opens the queue  ·  ↑ ↓ reorder tracks",
+	TextColor3 = C.textSec, Font = Enum.Font.Gotham, TextSize = 10, TextYAlignment = Enum.TextYAlignment.Top,
+})
+
+local serverCard = cmCard(THEME.pages.Settings, 96, 3)
 cmLabel(serverCard, {
 	Size = UDim2.new(1, -20, 0, 16), Position = UDim2.new(0, 14, 0, 8),
 	Text = "PYTHON SERVER", TextColor3 = C.textMuted, Font = Enum.Font.GothamBold, TextSize = 9,
@@ -1359,6 +1736,7 @@ local saveServerBtn = make("TextButton", {
 	AutoButtonColor = false, ZIndex = 103,
 }, serverCard)
 corner(RADIUS.btn, saveServerBtn)
+pressable(saveServerBtn, 0.94)
 
 local testServerBtn = make("TextButton", {
 	Size = UDim2.new(0, 72, 0, 28), Position = UDim2.new(1, -76, 0, 34),
@@ -1368,6 +1746,7 @@ local testServerBtn = make("TextButton", {
 }, serverCard)
 corner(RADIUS.btn, testServerBtn)
 stroke(C.borderSub, 1, 0.3, testServerBtn)
+pressable(testServerBtn, 0.94)
 
 local serverTestLabel = cmLabel(serverCard, {
 	Size = UDim2.new(1, -28, 0, 16), Position = UDim2.new(0, 14, 0, 70),
@@ -1426,7 +1805,7 @@ testServerBtn.MouseButton1Click:Connect(function()
 	end)
 end)
 
-local c4 = cmCard(THEME.pages.Settings, 210, 3)
+local c4 = cmCard(THEME.pages.Settings, 210, 4)
 cmLabel(c4, {
 	Size = UDim2.new(1, -16, 0, 14), Position = UDim2.new(0, 14, 0, 8),
 	Text = "WHITELIST MANAGER", TextColor3 = C.spotify, Font = Enum.Font.GothamBold, TextSize = 9,
@@ -1457,6 +1836,7 @@ local btnAddWL = make("TextButton", {
 	Font = Enum.Font.GothamBold, TextSize = 10, BorderSizePixel = 0, ZIndex = 103, AutoButtonColor = false,
 }, c4)
 corner(RADIUS.btn, btnAddWL)
+pressable(btnAddWL, 0.94)
 
 local wlList = make("ScrollingFrame", {
 	Name = "WhitelistEntries", Size = UDim2.new(1, -28, 0, 118),
@@ -1579,6 +1959,10 @@ end
 closeCreditsBtn.MouseButton1Click:Connect(function() toggleCredits(false) end)
 modalBackdrop.MouseButton1Click:Connect(function() toggleCredits(false) end)
 creditsButton.MouseButton1Click:Connect(function() toggleCredits(not creditsModal.Visible) end)
+serverPill.MouseButton1Click:Connect(function()
+	if not creditsModal.Visible then toggleCredits(true) end
+	THEME.switchPage("Settings")
+end)
 
 local function enableDragging(dragHandle, targetFrame, onDragCallback)
 	local isDragging, dragStart, startPos = false, nil, nil
@@ -1626,6 +2010,7 @@ local function getDuration()
 end
 
 local eqTick = 0
+local glowLevel = 0
 local isScrubbing = false
 local scrubInputType = nil
 local scrubOriginalPosition = 0
@@ -1633,6 +2018,8 @@ RunService.RenderStepped:Connect(function(dt)
 	local active = isPlaying and not isPaused
 	if active then eqTick = eqTick + dt end
 
+	local mirror = THEME.options.visStyle == "Mirror"
+	local energy = 0
 	for i, bar in ipairs(eqBars) do
 		local target = 4
 		if active then
@@ -1641,9 +2028,41 @@ RunService.RenderStepped:Connect(function(dt)
 		end
 		eqHeights[i] = eqHeights[i] + (target - eqHeights[i]) * math.min(1, dt * 12)
 		local h = math.max(4, math.floor(eqHeights[i]))
+		energy = energy + (h - 4) / 54
 		bar.Size = UDim2.new(0, 4, 0, h)
-		bar.Position = UDim2.new(0, (i - 1) * 8, 1, -h)
+		if mirror then
+			bar.Position = UDim2.new(0, (i - 1) * 8, 0.5, -math.floor(h / 2))
+		else
+			bar.Position = UDim2.new(0, (i - 1) * 8, 1, -h)
+		end
 		bar.BackgroundTransparency = active and math.clamp(0.55 - (h / 60) * 0.5, 0, 0.6) or 0.65
+	end
+	energy = energy / #eqBars
+
+	local glowTarget = (THEME.options.beatGlow and active) and energy or 0
+	glowLevel = glowLevel + (glowTarget - glowLevel) * math.min(1, dt * 10)
+	local pad = 8 + glowLevel * 8
+	artGlow.Size = UDim2.new(0, 190 + pad * 2, 0, 190 + pad * 2)
+	artGlow.Position = UDim2.new(0, -pad, 0, -pad)
+	artGlow.BackgroundTransparency = 0.93 - glowLevel * 0.35
+
+	if marquee.overflow > 1 then
+		marquee.t = marquee.t + dt
+		local speed = 34
+		local travel = marquee.overflow / speed
+		local period = 1.8 + travel + 1.4 + travel
+		local phase = marquee.t % period
+		local x
+		if phase < 1.8 then
+			x = 0
+		elseif phase < 1.8 + travel then
+			x = -(phase - 1.8) * speed
+		elseif phase < 1.8 + travel + 1.4 then
+			x = -marquee.overflow
+		else
+			x = -marquee.overflow + (phase - (1.8 + travel + 1.4)) * speed
+		end
+		songTitle.Position = UDim2.new(0, math.floor(x), 0, 0)
 	end
 
 	if active and not isScrubbing then
@@ -1657,6 +2076,7 @@ RunService.RenderStepped:Connect(function(dt)
 	end
 end)
 
+;(function()
 local function applyAccent(accentColor)
 	currentAccent = accentColor
 	topAccent.BackgroundColor3     = accentColor
@@ -1670,8 +2090,11 @@ local function applyAccent(accentColor)
 	saveServerBtn.BackgroundColor3 = accentColor
 	artGlow.BackgroundColor3       = accentColor
 	sourceBadge.BackgroundColor3   = accentColor
+	qNowLabel.TextColor3           = accentColor
+	THEME.pageThumb.BackgroundColor3 = accentColor
 	for _, bar in ipairs(eqBars) do bar.BackgroundColor3 = accentColor end
 	for _, r in ipairs(accentOrbs) do tween(r, {BackgroundColor3 = accentColor}, 0.35) end
+	for _, hook in ipairs(THEME.accentHooks) do hook() end
 
 	local darkText = (accentColor == C.spotify or accentColor == C.cyan)
 	local fg = darkText and C.black or C.white
@@ -1679,43 +2102,55 @@ local function applyAccent(accentColor)
 	loadButton.TextColor3     = fg
 	miniPlayBtn.TextColor3    = fg
 	sourceBadgeText.TextColor3= fg
+	saveServerBtn.TextColor3  = fg
 	if THEME.refreshSelection then THEME.refreshSelection() end
 	if THEME.refreshPageTabs then THEME.refreshPageTabs() end
 end
 
+local SERVICE_MODES = {
+	spotify = {
+		accent = C.spotify,
+		badge = "SPOTIFY",
+		placeholder = "Paste a Spotify link or song name...",
+		subtitle = "v4.0  ·  spotify"
+	},
+
+	youtube = {
+		accent = C.youtube,
+		badge = "YOUTUBE",
+		placeholder = "Paste a YouTube link or song name...",
+		subtitle = "v4.0  ·  youtube"
+	},
+
+	apple = {
+		accent = C.apple,
+		badge = "APPLE",
+		placeholder = "Paste an Apple Music link or song name...",
+		subtitle = "v4.0  ·  apple music"
+	},
+
+	auto = {
+		accent = C.cyan,
+		badge = "AUTO",
+		placeholder = "Auto-detect any link, or type a song name...",
+		subtitle = "v4.0  ·  auto-detect"
+	}
+}
+
 local function switchServiceMode(mode)
 	serviceMode = mode
 
-	local tabs = {
-		spotify = {btn = tabSpotify, col = C.spotify, label = "SPOTIFY"},
-		youtube = {btn = tabYouTube, col = C.youtube, label = "YOUTUBE"},
-		apple   = {btn = tabApple,   col = C.apple,   label = "APPLE"},
-		auto    = {btn = tabAuto,    col = C.cyan,    label = "AUTO"},
-	}
-
 	THEME.refreshServiceModeTabs(true)
 
-	applyAccent(tabs[mode] and tabs[mode].col or C.spotify)
-	sourceBadgeText.Text = tabs[mode] and tabs[mode].label or "SPOTIFY"
+	local data = SERVICE_MODES[mode] or SERVICE_MODES.spotify
 
-	if mode == "spotify" then
-		inputBox.PlaceholderText = "Paste a Spotify link or song name..."
-		headerSub.Text = "v4.0  ·  spotify"
-	elseif mode == "youtube" then
-		inputBox.PlaceholderText = "Paste a YouTube link or song name..."
-		headerSub.Text = "v4.0  ·  youtube"
-	elseif mode == "apple" then
-		inputBox.PlaceholderText = "Paste an Apple Music link or song name..."
-		headerSub.Text = "v4.0  ·  apple music"
-	else
-		inputBox.PlaceholderText = "Auto-detect any link, or type a song name..."
-		headerSub.Text = "v4.0  ·  auto-detect"
-	end
+	applyAccent(data.accent)
+	sourceBadgeText.Text = data.badge
+	inputBox.PlaceholderText = data.placeholder
+	headerSub.Text = data.subtitle
 
 	setStatus("Switched mode: " .. mode:upper(), C.success)
 end
-
-tabSpotify.TextColor3 = C.black
 
 tabSpotify.MouseButton1Click:Connect(function() switchServiceMode("spotify") end)
 tabYouTube.MouseButton1Click:Connect(function() switchServiceMode("youtube") end)
@@ -1727,6 +2162,9 @@ function setStatus(text, color)
 	statusLabel.Text           = text
 	statusLabel.TextColor3     = color
 	statusDot.BackgroundColor3 = color
+	statusDot.Size     = UDim2.new(0, 11, 0, 11)
+	statusDot.Position = UDim2.new(0, 10, 0.5, -5.5)
+	tween(statusDot, {Size = UDim2.new(0, 7, 0, 7), Position = UDim2.new(0, 12, 0.5, -3.5)}, 0.35, Enum.EasingStyle.Back)
 end
 
 local function popIn()
@@ -1841,6 +2279,8 @@ function updateAlbumArt(imagePath, imageUrl, trackId)
 		albumArtGradient.Enabled = false
 		miniArt.Image = asset
 		miniArt.ImageColor3 = Color3.new(1, 1, 1)
+		qNowArt.Image = asset
+		qNowArt.ImageColor3 = Color3.new(1, 1, 1)
 	end
 
 	local function setFallback()
@@ -1849,6 +2289,8 @@ function updateAlbumArt(imagePath, imageUrl, trackId)
 		albumArtGradient.Enabled = true
 		miniArt.Image = fallbackIcon
 		miniArt.ImageColor3 = C.textMuted
+		qNowArt.Image = fallbackIcon
+		qNowArt.ImageColor3 = C.textMuted
 	end
 
 	if imagePath and imagePath ~= "" and isfile and isfile(imagePath) then
@@ -1874,6 +2316,8 @@ local function setNowPlaying(sd)
 	songArtist.Text = sd.artist or "—"
 	miniTitle.Text  = sd.title or "Unknown"
 	miniArtist.Text = sd.artist or "—"
+	qNowTitle.Text  = sd.title or "Unknown"
+	qNowArtist.Text = sd.artist or "—"
 	local d = getDuration()
 	timeTotalLabel.Text = d and formatTime(d) or "--:--"
 	updateAlbumArt(sd.image_path or "", sd.image or "", sd.track_id)
@@ -1884,6 +2328,8 @@ local function setIdleUI()
 	songArtist.Text = "Paste a link or search below to play"
 	miniTitle.Text  = "Nothing playing"
 	miniArtist.Text = "Idle"
+	qNowTitle.Text  = "Nothing playing"
+	qNowArtist.Text = "Queue is idle"
 	timeElapsedLabel.Text = "00:00"
 	timeTotalLabel.Text   = "--:--"
 	progFill.Size = UDim2.new(0, 0, 1, 0)
@@ -1946,6 +2392,7 @@ function updateQueueUI()
 
 	emptyQueueLabel.Visible = (#songQueue == 0)
 	queueToggleBtn.Text     = string.format("≡  Queue (%d)", #songQueue)
+	qSectionLabel.Text      = string.format("UP NEXT  ·  %d", #songQueue)
 
 	for i, song in ipairs(songQueue) do
 		local queueIndex = i
@@ -1983,6 +2430,7 @@ function updateQueueUI()
 			Font = Enum.Font.GothamBold, TextSize = 10, BorderSizePixel = 0, AutoButtonColor = false,
 		}, item)
 		corner(RADIUS.pill, pb)
+		pressable(pb, 0.88)
 		THEME.registerBackendControl(pb)
 		if currentAccent == C.youtube or currentAccent == C.apple then pb.TextColor3 = C.white end
 
@@ -1994,6 +2442,7 @@ function updateQueueUI()
 			AutoButtonColor = false, Interactable = i > 1,
 		}, item)
 		corner(RADIUS.pill, upButton)
+		pressable(upButton, 0.88)
 		upButton.TextTransparency = i > 1 and 0 or 0.65
 		upButton.MouseButton1Click:Connect(function() moveSongInQueue(queueIndex, -1) end)
 
@@ -2005,6 +2454,7 @@ function updateQueueUI()
 			AutoButtonColor = false, Interactable = i < #songQueue,
 		}, item)
 		corner(RADIUS.pill, downButton)
+		pressable(downButton, 0.88)
 		downButton.TextTransparency = i < #songQueue and 0 or 0.65
 		downButton.MouseButton1Click:Connect(function() moveSongInQueue(queueIndex, 1) end)
 
@@ -2023,6 +2473,7 @@ function updateQueueUI()
 			Font = Enum.Font.GothamBold, TextSize = 9, BorderSizePixel = 0, AutoButtonColor = false,
 		}, item)
 		corner(RADIUS.pill, rb)
+		pressable(rb, 0.88)
 		THEME.registerBackendControl(rb)
 		hover(rb, C.surfacePop, Color3.fromRGB(190, 50, 50), C.textMuted, C.white)
 		rb.MouseButton1Click:Connect(function()
@@ -2061,6 +2512,7 @@ end
 
 THEME.setBackendAvailable = function(available)
 	pythonRunning = available
+	if THEME.updateServerPill then THEME.updateServerPill(available) end
 	for index = #THEME.backendControls, 1, -1 do
 		local control = THEME.backendControls[index]
 		if control.instance.Parent then
@@ -2331,6 +2783,20 @@ function pauseSong()
 	end
 end
 
+local function updateSeekTip(screenX)
+	local duration = getDuration()
+	local width = progTrack.AbsoluteSize.X
+	if not duration or width <= 0 then
+		seekTip.Visible = false
+		return
+	end
+	local fraction = math.clamp((screenX - progTrack.AbsolutePosition.X) / width, 0, 1)
+	seekTipText.Text = formatTime(duration * fraction)
+	local x = math.clamp(fraction * width - 24, 0, math.max(0, width - 48))
+	seekTip.Position = UDim2.new(0, x, 0, 79)
+	seekTip.Visible = true
+end
+
 local function updateSeekPreview(screenX)
 	local duration = getDuration()
 	local width = progTrack.AbsoluteSize.X
@@ -2340,7 +2806,21 @@ local function updateSeekPreview(screenX)
 	timeElapsedLabel.Text = formatTime(playbackElapsed)
 	progFill.Size = UDim2.new(fraction, 0, 1, 0)
 	miniFill.Size = UDim2.new(fraction, 0, 1, 0)
+	updateSeekTip(screenX)
 end
+
+progTrack.MouseEnter:Connect(function()
+	tween(progTrackVisual, {Size = UDim2.new(1, 0, 0, 8), Position = UDim2.new(0, 0, 0.5, -4)}, 0.12)
+	tween(progKnob, {Size = UDim2.new(0, 14, 0, 14), Position = UDim2.new(1, -7, 0.5, -7)}, 0.12)
+end)
+progTrack.MouseLeave:Connect(function()
+	tween(progTrackVisual, {Size = UDim2.new(1, 0, 0, 6), Position = UDim2.new(0, 0, 0.5, -3)}, 0.12)
+	tween(progKnob, {Size = UDim2.new(0, 12, 0, 12), Position = UDim2.new(1, -6, 0.5, -6)}, 0.12)
+	if not isScrubbing then seekTip.Visible = false end
+end)
+progTrack.MouseMoved:Connect(function(x)
+	if not isScrubbing then updateSeekTip(x) end
+end)
 
 local function seekPlayback(position)
 	if not (isPlaying or isPaused) then return end
@@ -2403,6 +2883,7 @@ end)
 UserInputService.InputEnded:Connect(function(input)
 	if not isScrubbing or input.UserInputType ~= scrubInputType then return end
 	isScrubbing = false
+	seekTip.Visible = false
 	seekPlayback(playbackElapsed)
 end)
 
@@ -2700,8 +3181,10 @@ pcall(function()
 end)
 
 applyAccent(C.spotify)
+THEME.applyPanelTransparency()
 setTransportUI("idle")
 updateQueueUI()
+refreshMarquee()
 popIn()
 
 task.spawn(function()
@@ -2720,3 +3203,4 @@ task.spawn(function()
 		task.wait(3)
 	end
 end)
+end)()
