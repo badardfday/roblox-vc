@@ -612,11 +612,12 @@ local function headerIconButton(name, text, xOff)
 	pressable(b)
 	return b
 end
-local creditsButton  = headerIconButton("CreditsButton", "ℹ", -80)
+local creditsButton  = headerIconButton("CreditsButton", "ℹ", -116)
+local vcBypassButton = headerIconButton("VCBypassButton", "🎙", -80)
 local headerQueueBtn = headerIconButton("HeaderQueueBtn", "≡", -44)
 
 local serverPill = make("TextButton", {
-	Name = "ServerPill", Size = UDim2.new(0, 88, 0, 24), Position = UDim2.new(1, -180, 0.5, -12),
+	Name = "ServerPill", Size = UDim2.new(0, 88, 0, 24), Position = UDim2.new(1, -216, 0.5, -12),
 	BackgroundColor3 = C.surfaceHigh, Text = "", BorderSizePixel = 0, AutoButtonColor = false,
 }, header)
 corner(RADIUS.pill, serverPill)
@@ -3179,6 +3180,517 @@ pcall(function()
 		end
 	end
 end)
+
+
+-- Anti Voice Chat Ban
+local VCBypass = {
+	Enabled = false,
+	statusText = "Idle",
+}
+
+local vcBypassThread
+local getConnections = typeof(getconnections) == "function" and getconnections or nil
+local getHiddenGui = typeof(gethui) == "function" and gethui or nil
+local clonerefFn = typeof(cloneref) == "function" and cloneref or function(x) return x end
+
+local voiceChatService, voiceChatInternal
+pcall(function()
+	voiceChatService = clonerefFn(game:GetService("VoiceChatService"))
+	voiceChatInternal = clonerefFn(game:GetService("VoiceChatInternal"))
+end)
+
+local mutedIcon = "rbxasset://textures/ui/VoiceChat/MicLight/Muted.png"
+local unmutedIcon = "rbxasset://textures/ui/VoiceChat/MicLight/Talking0.png"
+local micOffsetX, micOffsetY, micSize = 14, 13, 35
+local disableStart = 7
+
+local vcState = {
+	muted = false,
+	busy = false,
+	executed = false,
+}
+
+local vcController, vcMicIcon, vcMicButton
+local vcClickConnection, vcStateConnection
+local vcMicToggle, vcRedVoiceDot
+local vcHidden, vcDisabledConnections = {}, {}
+local vcOriginalRedDot, vcOriginalPaused
+local coreGuiRef = game:GetService("CoreGui")
+
+local function vcNotify(title, msg, color)
+	setStatus(string.format("%s · %s", title, msg), color or C.warn)
+end
+
+local function vcGetGuiHost()
+	if getHiddenGui then
+		local ok, hiddenGui = pcall(getHiddenGui)
+		if ok and typeof(hiddenGui) == "Instance" then
+			return hiddenGui
+		end
+	end
+	if typeof(coreGuiRef) == "Instance" then
+		return coreGuiRef
+	end
+	local ok, playerGui = pcall(function()
+		return player:WaitForChild("PlayerGui", 5)
+	end)
+	return ok and typeof(playerGui) == "Instance" and playerGui or nil
+end
+
+local function vcPublishMute(paused)
+	if not voiceChatInternal then return end
+	pcall(function()
+		voiceChatInternal:PublishPause(paused)
+	end)
+end
+
+local function vcIsPublishPaused()
+	if not voiceChatInternal then return false end
+	local ok, paused = pcall(function()
+		return voiceChatInternal:IsPublishPaused()
+	end)
+	return ok and paused == true
+end
+
+local function vcSyncIcon()
+	if vcMicIcon then
+		vcMicIcon.Image = (vcState.muted and mutedIcon or unmutedIcon)
+	end
+	if vcRedVoiceDot and vcRedVoiceDot.Parent then
+		if vcOriginalRedDot == nil then
+			vcOriginalRedDot = vcRedVoiceDot.Visible
+		end
+		vcRedVoiceDot.Visible = not vcState.muted
+	end
+end
+
+local function vcSetMuted(paused)
+	vcState.muted = paused and true or false
+	vcPublishMute(vcState.muted)
+	vcSyncIcon()
+end
+
+local function vcCallVoice(methodName)
+	if not voiceChatService then return end
+	local ok, method = pcall(function()
+		return voiceChatService[methodName]
+	end)
+	if not ok or typeof(method) ~= "function" then return end
+	pcall(function()
+		method(voiceChatService)
+	end)
+end
+
+local function vcScanMic()
+	vcMicToggle, vcRedVoiceDot, vcMicIcon = nil, nil, nil
+	local ok, objects = pcall(function()
+		return coreGuiRef:QueryDescendants("GuiObject")
+	end)
+	if not ok or type(objects) ~= "table" then return end
+	for _, object in ipairs(objects) do
+		if object.Name == "toggle_mic_mute" then
+			vcMicToggle = object
+		elseif object.Name == "RedVoiceDot" then
+			vcRedVoiceDot = object
+		end
+	end
+	if vcMicToggle then
+		local iconFrame = vcMicToggle:FindFirstChild("IntegrationIconFrame", true)
+		if iconFrame then
+			vcMicIcon = iconFrame:FindFirstChild("IntegrationIcon", true)
+		end
+	end
+end
+
+local function vcStep(seconds)
+	task.wait(seconds)
+	return VCBypass.Enabled
+end
+
+local function vcMicImage()
+	local icon = vcMicIcon and vcMicIcon:FindFirstChild("1")
+	return icon and icon.Image or nil
+end
+
+local function vcWaitUnmuted()
+	vcScanMic()
+	if not vcMicToggle then
+		vcCallVoice("joinVoice")
+		if not vcStep(1.5) then return end
+		vcScanMic()
+	end
+	vcNotify("VC Bypass", "Unmute the game mic to continue", C.warn)
+	VCBypass.statusText = "Waiting for unmute"
+	if THEME.refreshVCBypassUI then THEME.refreshVCBypassUI() end
+	local deadline = tick() + 60
+	while VCBypass.Enabled and tick() < deadline do
+		local image = vcMicImage()
+		if image and image ~= "" and image ~= mutedIcon then
+			return true
+		end
+		task.wait(0.5)
+	end
+end
+
+local function vcTransparencyOf(object)
+	if object:IsA("ImageLabel") or object:IsA("ImageButton") then
+		return "ImageTransparency"
+	end
+	return (object:IsA("TextLabel") or object:IsA("TextButton")) and "TextTransparency" or nil
+end
+
+local function vcHideMicButton()
+	if not vcMicToggle then return end
+	local ok, objects = pcall(function()
+		return vcMicToggle:QueryDescendants("GuiObject")
+	end)
+	if not ok or type(objects) ~= "table" then return end
+	for _, object in ipairs(objects) do
+		local property = vcTransparencyOf(object)
+		if property then
+			vcHidden[object] = {property = property, value = object[property]}
+			object[property] = 1
+		end
+	end
+end
+
+local function vcDisableStateConnections()
+	if not getConnections or not voiceChatInternal then return end
+	local connections = getConnections(voiceChatInternal.StateChanged)
+	for index = disableStart, #connections do
+		local connection = connections[index]
+		if connection then
+			pcall(function()
+				connection:Disable()
+			end)
+			table.insert(vcDisabledConnections, connection)
+		end
+	end
+end
+
+local function vcCreateController()
+	local host = vcGetGuiHost()
+	if not host then return end
+
+	local existing = host:FindFirstChild("CustomVoiceController")
+	if existing then
+		existing:Destroy()
+	end
+
+	vcController = Instance.new("ScreenGui")
+	vcController.Name = "CustomVoiceController"
+	vcController.ResetOnSpawn = false
+	vcController.IgnoreGuiInset = true
+	vcController.DisplayOrder = 999999
+	vcController.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	vcController.Parent = host
+
+	vcMicButton = Instance.new("TextButton")
+	vcMicButton.Name = "MicHitArea"
+	vcMicButton.BackgroundTransparency = 1
+	vcMicButton.Position = UDim2.new(0, 150 + micOffsetX, 0, 4 + micOffsetY)
+	vcMicButton.Size = UDim2.new(0, micSize, 0, micSize)
+	vcMicButton.Text = ""
+	vcMicButton.Active = true
+	vcMicButton.ZIndex = 10000
+	vcMicButton.Parent = vcController
+
+	vcMicIcon = Instance.new("ImageLabel")
+	vcMicIcon.Name = "MicIcon"
+	vcMicIcon.BackgroundTransparency = 1
+	vcMicIcon.Image = mutedIcon
+	vcMicIcon.ScaleType = Enum.ScaleType.Fit
+	vcMicIcon.Size = UDim2.new(1, 0, 1, 0)
+	vcMicIcon.ZIndex = 10001
+	vcMicIcon.Parent = vcMicButton
+
+	vcClickConnection = vcMicButton.MouseButton1Click:Connect(function()
+		vcSetMuted(not vcState.muted)
+	end)
+
+	if voiceChatInternal then
+		vcStateConnection = voiceChatInternal.StateChanged:Connect(function()
+			vcState.muted = vcIsPublishPaused()
+			vcSyncIcon()
+		end)
+	end
+
+	if not vcMicToggle then
+		local own = vcMicIcon
+		vcScanMic()
+		vcMicIcon = own
+	end
+
+	local iconPosition
+	if vcMicToggle and vcMicToggle.AbsolutePosition.X > 50 then
+		iconPosition = vcMicToggle.AbsolutePosition
+	end
+	if iconPosition and iconPosition.X > 0 and iconPosition.Y >= 0 then
+		vcMicButton.Position = UDim2.new(0, iconPosition.X + micOffsetX, 0, iconPosition.Y + micOffsetY)
+		vcMicButton.Size = UDim2.new(0, micSize, 0, micSize)
+	end
+
+	vcSetMuted(true)
+	return true
+end
+
+local function vcRestore()
+	if typeof(vcBypassThread) == "thread" and vcBypassThread ~= coroutine.running() and coroutine.status(vcBypassThread) ~= "dead" then
+		pcall(task.cancel, vcBypassThread)
+	end
+	vcBypassThread = nil
+	vcState.busy, vcState.executed = false, false
+	vcState.muted = false
+
+	if vcClickConnection then
+		pcall(function() vcClickConnection:Disconnect() end)
+		vcClickConnection = nil
+	end
+	if vcStateConnection then
+		pcall(function() vcStateConnection:Disconnect() end)
+		vcStateConnection = nil
+	end
+
+	for object, entry in pairs(vcHidden) do
+		pcall(function() object[entry.property] = entry.value end)
+	end
+	table.clear(vcHidden)
+
+	if vcRedVoiceDot and vcOriginalRedDot ~= nil then
+		pcall(function() vcRedVoiceDot.Visible = vcOriginalRedDot end)
+	end
+	vcOriginalRedDot = nil
+
+	if vcController then
+		pcall(function() vcController:Destroy() end)
+		vcController = nil
+	end
+
+	for index = 1, #vcDisabledConnections do
+		pcall(function()
+			vcDisabledConnections[index]:Enable()
+		end)
+	end
+	table.clear(vcDisabledConnections)
+
+	if vcOriginalPaused ~= nil then
+		vcPublishMute(vcOriginalPaused)
+		vcOriginalPaused = nil
+	end
+
+	vcMicIcon, vcMicButton, vcMicToggle, vcRedVoiceDot = nil, nil, nil, nil
+	VCBypass.statusText = "Idle"
+	if THEME.refreshVCBypassUI then THEME.refreshVCBypassUI() end
+end
+
+local function vcBypass()
+	if vcState.busy or vcState.executed then
+		vcNotify("VC Bypass", vcState.executed and "Already active" or "Already running", C.warn)
+		return
+	end
+
+	if not voiceChatService or not voiceChatInternal or not getConnections then
+		vcNotify("VC Bypass", "Voice services or getconnections unavailable", C.error)
+		VCBypass.Enabled = false
+		if THEME.refreshVCBypassUI then THEME.refreshVCBypassUI() end
+		return
+	end
+
+	vcOriginalPaused = vcIsPublishPaused()
+	vcState.busy = true
+	vcBypassThread = coroutine.running()
+	VCBypass.statusText = "Running"
+	if THEME.refreshVCBypassUI then THEME.refreshVCBypassUI() end
+
+	local ok, result = pcall(function()
+		if not vcWaitUnmuted() then return end
+		if not vcStep(1) then return end
+
+		vcCallVoice("leaveVoice")
+		if not vcStep(2) then return end
+
+		vcDisableStateConnections()
+		if not vcStep(2) then return end
+
+		vcCallVoice("joinVoice")
+		if not vcStep(1) then return end
+
+		vcScanMic()
+		vcHideMicButton()
+		return vcCreateController()
+	end)
+
+	vcBypassThread = nil
+	vcState.busy = false
+
+	if not VCBypass.Enabled then
+		vcRestore()
+		return
+	end
+
+	if ok and result then
+		vcState.executed = true
+		VCBypass.statusText = "Active"
+		vcNotify("VC Bypass", "Active — use the mic button to mute/unmute", C.success)
+	else
+		vcRestore()
+		vcNotify("VC Bypass", "Failed" .. (ok and "" or (": " .. tostring(result))), C.error)
+		VCBypass.Enabled = false
+	end
+	if THEME.refreshVCBypassUI then THEME.refreshVCBypassUI() end
+end
+
+function VCBypass.Toggle(force)
+	if force ~= nil then
+		VCBypass.Enabled = force and true or false
+	else
+		VCBypass.Enabled = not VCBypass.Enabled
+	end
+
+	if VCBypass.Enabled then
+		task.spawn(vcBypass)
+	else
+		vcRestore()
+		vcNotify("VC Bypass", "Disabled", C.warn)
+	end
+	if THEME.refreshVCBypassUI then THEME.refreshVCBypassUI() end
+end
+
+local vcPanel = make("Frame", {
+	Name = "VCBypassPanel",
+	Size = UDim2.new(0, 210, 0, 118),
+	Position = UDim2.new(1, -226, 0, 16),
+	BackgroundColor3 = C.surface,
+	BorderSizePixel = 0,
+	Visible = false,
+	ZIndex = 50,
+}, screenGui)
+corner(RADIUS.card, vcPanel)
+stroke(C.borderSub, 1, 0.25, vcPanel)
+glassDecor(vcPanel, 14, {
+	{x = 30, y = 20, d = 80, color = C.cyan, a = 0.96},
+	{x = 170, y = 70, d = 70, color = C.spotify, a = 0.97},
+})
+
+local vcPanelHeader = make("Frame", {
+	Size = UDim2.new(1, 0, 0, 32),
+	BackgroundTransparency = 1,
+	ZIndex = 51,
+}, vcPanel)
+make("TextLabel", {
+	Size = UDim2.new(1, -36, 1, 0),
+	Position = UDim2.new(0, 12, 0, 0),
+	BackgroundTransparency = 1,
+	Text = "VC Bypass",
+	TextColor3 = C.textPrimary,
+	Font = Enum.Font.GothamBold,
+	TextSize = 13,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	ZIndex = 52,
+}, vcPanelHeader)
+local vcPanelClose = make("TextButton", {
+	Size = UDim2.new(0, 24, 0, 24),
+	Position = UDim2.new(1, -30, 0.5, -12),
+	BackgroundColor3 = C.surfaceHigh,
+	Text = "✕",
+	TextColor3 = C.textMuted,
+	Font = Enum.Font.GothamBold,
+	TextSize = 11,
+	BorderSizePixel = 0,
+	AutoButtonColor = false,
+	ZIndex = 52,
+}, vcPanelHeader)
+corner(RADIUS.btn, vcPanelClose)
+pressable(vcPanelClose)
+vcPanelClose.MouseButton1Click:Connect(function()
+	vcPanel.Visible = false
+end)
+
+local vcStatusDot = make("Frame", {
+	Size = UDim2.new(0, 8, 0, 8),
+	Position = UDim2.new(0, 14, 0, 44),
+	BackgroundColor3 = C.textMuted,
+	BorderSizePixel = 0,
+	ZIndex = 52,
+}, vcPanel)
+corner(RADIUS.pill, vcStatusDot)
+
+local vcStatusLabel = make("TextLabel", {
+	Size = UDim2.new(1, -40, 0, 16),
+	Position = UDim2.new(0, 28, 0, 40),
+	BackgroundTransparency = 1,
+	Text = "Status: Idle",
+	TextColor3 = C.textSec,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	ZIndex = 52,
+}, vcPanel)
+
+local vcHintLabel = make("TextLabel", {
+	Size = UDim2.new(1, -24, 0, 14),
+	Position = UDim2.new(0, 12, 0, 58),
+	BackgroundTransparency = 1,
+	Text = "Needs getconnections · unmute when prompted",
+	TextColor3 = C.textMuted,
+	Font = Enum.Font.Gotham,
+	TextSize = 9,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	ZIndex = 52,
+}, vcPanel)
+
+local vcToggleBtn = make("TextButton", {
+	Size = UDim2.new(1, -24, 0, 30),
+	Position = UDim2.new(0, 12, 1, -40),
+	BackgroundColor3 = C.surfaceHigh,
+	Text = "Enable Bypass",
+	TextColor3 = C.textPrimary,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	BorderSizePixel = 0,
+	AutoButtonColor = false,
+	ZIndex = 52,
+}, vcPanel)
+corner(RADIUS.btn, vcToggleBtn)
+stroke(C.borderSub, 1, 0.3, vcToggleBtn)
+pressable(vcToggleBtn)
+
+THEME.refreshVCBypassUI = function()
+	local active = VCBypass.Enabled and vcState.executed
+	local running = VCBypass.Enabled and vcState.busy
+	local color = C.textMuted
+	if active then
+		color = C.success
+	elseif running then
+		color = C.warn
+	elseif VCBypass.Enabled then
+		color = C.cyan
+	end
+	vcStatusDot.BackgroundColor3 = color
+	vcStatusLabel.Text = "Status: " .. (VCBypass.statusText or "Idle")
+	if VCBypass.Enabled then
+		vcToggleBtn.Text = active and "Disable Bypass" or "Cancel"
+		vcToggleBtn.BackgroundColor3 = Color3.fromRGB(190, 50, 50)
+		vcToggleBtn.TextColor3 = C.white
+	else
+		vcToggleBtn.Text = "Enable Bypass"
+		vcToggleBtn.BackgroundColor3 = C.surfaceHigh
+		vcToggleBtn.TextColor3 = C.textPrimary
+	end
+end
+
+vcToggleBtn.MouseButton1Click:Connect(function()
+	VCBypass.Toggle()
+end)
+
+vcBypassButton.MouseButton1Click:Connect(function()
+	vcPanel.Visible = not vcPanel.Visible
+	if vcPanel.Visible then
+		THEME.refreshVCBypassUI()
+	end
+end)
+
+THEME.refreshVCBypassUI()
 
 applyAccent(C.spotify)
 THEME.applyPanelTransparency()
